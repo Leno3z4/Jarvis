@@ -1,0 +1,6 @@
+# Use paper while developing.
+TRADING_MODE=paper
+
+# Limits are in wei. These are deliberately conservative development defaults.
+MAX_TRADE_WEI=100000000000000000
+MAX_EXPOSURE_WEI=500000000000000000
