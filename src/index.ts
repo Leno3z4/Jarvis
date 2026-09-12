@@ -1,4 +1,5 @@
 import { getConfig, type Env } from "./config";
+import { ZeroExQuoteProvider } from "./market/zeroex";
 import { createExecutor } from "./trading/executor";
 import { applyPaperFill } from "./trading/portfolio";
 import { validateTrade } from "./trading/risk";
@@ -11,6 +12,13 @@ interface TradePayload {
   amountOutWei: string;
   slippageBps: number;
   reason: string;
+}
+
+interface QuotePayload {
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountInWei: string;
+  slippageBps: number;
 }
 
 function parseTradePayload(value: TradePayload): TradeRequest {
@@ -56,6 +64,26 @@ function serializeTradeResult(request: TradeRequest) {
     request: serializeTrade(request),
     amountOutWei: request.amountOutWei.toString(),
     message: "Paper fill persisted in Durable Object SQLite."
+  };
+}
+
+function serializeQuote(quote: Awaited<ReturnType<ZeroExQuoteProvider["getQuote"]>>) {
+  return {
+    tokenIn: quote.tokenIn,
+    tokenOut: quote.tokenOut,
+    amountInWei: quote.amountInWei.toString(),
+    amountOutWei: quote.amountOutWei.toString(),
+    priceImpactBps: quote.priceImpactBps,
+    estimatedGasWei: quote.estimatedGasWei?.toString(),
+    provider: quote.provider,
+    observedAt: quote.observedAt,
+    transaction: {
+      to: quote.transaction.to,
+      data: quote.transaction.data,
+      value: quote.transaction.value.toString(),
+      gas: quote.transaction.gas?.toString(),
+      gasPrice: quote.transaction.gasPrice?.toString()
+    }
   };
 }
 
@@ -210,6 +238,34 @@ export default {
       return Response.json({ ok: true, mode: config.mode });
     }
 
+    if (url.pathname === "/quote" && request.method === "POST") {
+      try {
+        if (!config.zeroExApiKey || !config.liveWalletAddress) {
+          return Response.json(
+            { ok: false, error: "Quote provider is not configured." },
+            { status: 503 }
+          );
+        }
+
+        const payload = (await request.json()) as QuotePayload;
+        const provider = new ZeroExQuoteProvider(
+          config.zeroExApiKey,
+          config.liveWalletAddress
+        );
+        const quote = await provider.getQuote({
+          tokenIn: payload.tokenIn,
+          tokenOut: payload.tokenOut,
+          amountInWei: BigInt(payload.amountInWei),
+          slippageBps: payload.slippageBps
+        });
+
+        return Response.json({ ok: true, quote: serializeQuote(quote) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Quote request failed.";
+        return Response.json({ ok: false, error: message }, { status: 502 });
+      }
+    }
+
     if (url.pathname === "/portfolio" && request.method === "GET") {
       return getStateStub(env).fetch(
         `https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`
@@ -260,7 +316,7 @@ export default {
     return Response.json({
       service: "Jarvis",
       mode: config.mode,
-      endpoints: ["/health", "/portfolio", "POST /paper/reset", "POST /trade"]
+      endpoints: ["/health", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
     });
   },
 
