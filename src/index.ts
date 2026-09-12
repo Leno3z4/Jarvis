@@ -77,6 +77,9 @@ function serializeQuote(quote: Awaited<ReturnType<ZeroExQuoteProvider["getQuote"
     estimatedGasWei: quote.estimatedGasWei?.toString(),
     provider: quote.provider,
     observedAt: quote.observedAt,
+    allowanceTarget: quote.allowanceTarget,
+    allowanceRequired: quote.allowanceRequired?.toString(),
+    simulationIncomplete: quote.simulationIncomplete,
     transaction: {
       to: quote.transaction.to,
       data: quote.transaction.data,
@@ -235,7 +238,11 @@ export default {
     const config = getConfig(env);
 
     if (url.pathname === "/health") {
-      return Response.json({ ok: true, mode: config.mode });
+      return Response.json({
+        ok: true,
+        mode: config.mode,
+        liveTradingEnabled: config.liveTradingEnabled
+      });
     }
 
     if (url.pathname === "/quote" && request.method === "POST") {
@@ -306,7 +313,14 @@ export default {
           );
         }
 
-        const result = await createExecutor("live").execute(trade);
+        const liveConfig = {
+          apiKey: config.zeroExApiKey ?? "",
+          rpcUrl: config.baseRpcUrl,
+          privateKey: config.livePrivateKey ?? "",
+          walletAddress: config.liveWalletAddress ?? "0x0000000000000000000000000000000000000000" as `0x${string}`,
+          enabled: config.liveTradingEnabled
+        };
+        const result = await createExecutor("live", liveConfig).execute(trade);
         return Response.json({ ok: result.status !== "rejected", result });
       } catch {
         return Response.json({ ok: false, error: "Invalid trade payload." }, { status: 400 });
