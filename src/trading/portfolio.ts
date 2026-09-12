@@ -28,7 +28,8 @@ export function applyPaperFill(
 
   const inputKey = addressKey(request.tokenIn);
   const outputKey = addressKey(request.tokenOut);
-  const inputBalance = inputKey === addressKey(state.cashToken)
+  const cashKey = addressKey(state.cashToken);
+  const inputBalance = inputKey === cashKey
     ? state.cashWei
     : (state.positions[inputKey] ?? 0n);
 
@@ -43,18 +44,15 @@ export function applyPaperFill(
     realizedPnlWei: state.realizedPnlWei
   };
 
-  if (inputKey === addressKey(next.cashToken)) {
+  if (inputKey === cashKey) {
     next.cashWei -= request.amountInWei;
   } else {
     next.positions[inputKey] = inputBalance - request.amountInWei;
     if (next.positions[inputKey] === 0n) delete next.positions[inputKey];
   }
 
-  if (outputKey === addressKey(next.cashToken)) {
+  if (outputKey === cashKey) {
     next.cashWei += amountOutWei;
-    if (inputKey !== addressKey(next.cashToken)) {
-      next.realizedPnlWei += amountOutWei - request.amountInWei;
-    }
   } else {
     next.positions[outputKey] = (next.positions[outputKey] ?? 0n) + amountOutWei;
   }
