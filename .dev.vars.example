@@ -1,6 +1,10 @@
-# Use paper while developing.
+# Keep paper mode until live execution is intentionally enabled.
 TRADING_MODE=paper
 
-# Limits are in wei. These are deliberately conservative development defaults.
+# Risk limits are in base units (wei-style integer strings).
 MAX_TRADE_WEI=100000000000000000
 MAX_EXPOSURE_WEI=500000000000000000
+
+# Paper account configuration. Set this to the Base token you want to treat as cash.
+PAPER_CASH_TOKEN=0x0000000000000000000000000000000000000000
+PAPER_STARTING_CASH_WEI=1000000000000000000
