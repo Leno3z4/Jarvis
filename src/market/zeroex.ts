@@ -104,7 +104,9 @@ export class ZeroExQuoteProvider implements QuoteProvider {
         gasPrice: data.transaction.gasPrice ? BigInt(data.transaction.gasPrice) : undefined
       },
       allowanceTarget: spender as `0x${string}` | undefined,
-      allowanceRequired: allowance?.required ? BigInt(allowance.required) : undefined,
+      allowanceRequired: allowance
+        ? BigInt(allowance.required ?? data.sellAmount)
+        : undefined,
       balanceIssue: Boolean(data.issues?.balance),
       simulationIncomplete: Boolean(data.issues?.simulationIncomplete)
     };
