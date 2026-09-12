@@ -39,12 +39,30 @@ function getStateStub(env: Env) {
   return env.BOT_STATE.get(env.BOT_STATE.idFromName("main"));
 }
 
+function serializePortfolio(portfolio: Portfolio) {
+  return {
+    cashWei: portfolio.cashWei.toString(),
+    positions: Object.fromEntries(
+      Object.entries(portfolio.positions).map(([token, amount]) => [token, amount.toString()])
+    ),
+    realizedPnlWei: portfolio.realizedPnlWei.toString()
+  };
+}
+
+function serializeTradeResult(request: TradeRequest) {
+  return {
+    mode: "paper" as const,
+    status: "simulated" as const,
+    request: serializeTrade(request),
+    amountOutWei: request.amountOutWei.toString(),
+    message: "Paper fill persisted in Durable Object SQLite."
+  };
+}
+
 export class TradingBotState {
-  private readonly state: DurableObjectState;
   private readonly sql: SqlStorage;
 
   constructor(state: DurableObjectState) {
-    this.state = state;
     this.sql = state.storage.sql;
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS meta (
@@ -121,14 +139,14 @@ export class TradingBotState {
     }
 
     if (url.pathname === "/portfolio" && request.method === "GET") {
-      return Response.json(this.portfolio(cashToken, startingCashWei,));
+      return Response.json(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
     }
 
     if (url.pathname === "/paper/reset" && request.method === "POST") {
-      this.sql.exec("DELETE FROM trades;");
-      this.sql.exec("DELETE FROM balances;");
-      this.sql.exec("DELETE FROM meta;");
-      return Response.json(this.portfolio(cashToken, startingCashWei));
+      this.sql.exec("DELETE FROM trades");
+      this.sql.exec("DELETE FROM balances");
+      this.sql.exec("DELETE FROM meta");
+      return Response.json(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
     }
 
     if (url.pathname === "/paper/trade" && request.method === "POST") {
@@ -137,15 +155,18 @@ export class TradingBotState {
       this.ensurePaperAccount(cashToken, startingCashWei);
 
       const current = this.portfolio(cashToken, startingCashWei);
-      const state = {
-        cashToken,
-        cashWei: current.cashWei,
-        positions: current.positions,
-        realizedPnlWei: current.realizedPnlWei
-      };
-      const next = applyPaperFill(state, trade, trade.amountOutWei);
+      const next = applyPaperFill(
+        {
+          cashToken,
+          cashWei: current.cashWei,
+          positions: current.positions,
+          realizedPnlWei: current.realizedPnlWei
+        },
+        trade,
+        trade.amountOutWei
+      );
 
-      this.sql.exec("DELETE FROM balances;");
+      this.sql.exec("DELETE FROM balances");
       this.sql.exec(
         "INSERT INTO balances(token, amount) VALUES (?, ?)",
         cashToken.toLowerCase(),
@@ -173,16 +194,7 @@ export class TradingBotState {
         new Date().toISOString()
       );
 
-      return Response.json({
-        ok: true,
-        result: {
-          mode: "paper",
-          status: "simulated",
-          request: trade,
-          amountOutWei: trade.amountOutWei,
-          message: "Paper fill persisted in Durable Object SQLite."
-        }
-      }, { headers: { "content-type": "application/json" } });
+      return Response.json({ ok: true, result: serializeTradeResult(trade) });
     }
 
     return Response.json({ ok: false, error: "Not found" }, { status: 404 });
@@ -206,10 +218,16 @@ export default {
 
     if (url.pathname === "/paper/reset" && request.method === "POST") {
       if (config.mode !== "paper") {
-        return Response.json({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
+        return Response.json(
+          { ok: false, error: "Paper reset is only available in paper mode." },
+          { status: 409 }
+        );
       }
       return getStateStub(env).fetch(
-        new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" })
+        new Request(
+          `https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
+          { method: "POST" }
+        )
       );
     }
 
@@ -223,7 +241,11 @@ export default {
           return getStateStub(env).fetch(
             new Request(
               `https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
-              { method: "POST", body: JSON.stringify(serializeTrade(trade)), headers: { "content-type": "application/json" } }
+              {
+                method: "POST",
+                body: JSON.stringify(serializeTrade(trade)),
+                headers: { "content-type": "application/json" }
+              }
             )
           );
         }
