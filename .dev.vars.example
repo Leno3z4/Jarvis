@@ -9,8 +9,9 @@ MAX_EXPOSURE_WEI=500000000000000000
 PAPER_CASH_TOKEN=0x0000000000000000000000000000000000000000
 PAPER_STARTING_CASH_WEI=1000000000000000000
 
-# Server-side 0x credentials. Do not commit real values.
+# Server-side 0x / Base configuration. Never commit real secrets.
 ZEROEX_API_KEY=
-
-# Wallet address only for firm quote/taker identification; never store its private key here.
+BASE_RPC_URL=https://mainnet.base.org
 LIVE_WALLET_ADDRESS=
+LIVE_PRIVATE_KEY=
+LIVE_TRADING_ENABLED=false
