@@ -18,9 +18,18 @@ export class PaperExecutor implements TradeExecutor {
 }
 
 export class LiveExecutor implements TradeExecutor {
-  constructor(private readonly config: LiveExecutionConfig) {}
+  constructor(private readonly config?: LiveExecutionConfig) {}
 
   async execute(request: TradeRequest): Promise<TradeResult> {
+    if (!this.config) {
+      return {
+        mode: "live",
+        status: "rejected",
+        request,
+        message: "Live execution is not configured."
+      };
+    }
+
     try {
       return await new BaseLiveExecutor().execute(request, this.config);
     } catch (error) {
@@ -32,4 +41,8 @@ export class LiveExecutor implements TradeExecutor {
       };
     }
   }
+}
+
+export function createExecutor(mode: "paper" | "live", liveConfig?: LiveExecutionConfig): TradeExecutor {
+  return mode === "paper" ? new PaperExecutor() : new LiveExecutor(liveConfig);
 }
