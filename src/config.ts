@@ -7,7 +7,10 @@ export interface Env {
   PAPER_CASH_TOKEN?: `0x${string}`;
   PAPER_STARTING_CASH_WEI?: string;
   ZEROEX_API_KEY?: string;
+  BASE_RPC_URL?: string;
   LIVE_WALLET_ADDRESS?: `0x${string}`;
+  LIVE_PRIVATE_KEY?: `0x${string}`;
+  LIVE_TRADING_ENABLED?: string;
   BOT_STATE: DurableObjectNamespace;
 }
 
@@ -17,10 +20,14 @@ export interface JarvisConfig {
   paperCashToken: `0x${string}`;
   paperStartingCashWei: bigint;
   zeroExApiKey?: string;
+  baseRpcUrl: string;
   liveWalletAddress?: `0x${string}`;
+  livePrivateKey?: `0x${string}`;
+  liveTradingEnabled: boolean;
 }
 
 const DEFAULT_PAPER_CASH_TOKEN = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 
 export function getConfig(env: Env): JarvisConfig {
   const mode = env.TRADING_MODE === "live" ? "live" : "paper";
@@ -33,6 +40,9 @@ export function getConfig(env: Env): JarvisConfig {
     paperCashToken: env.PAPER_CASH_TOKEN ?? DEFAULT_PAPER_CASH_TOKEN,
     paperStartingCashWei: BigInt(env.PAPER_STARTING_CASH_WEI ?? "1000000000000000000"),
     zeroExApiKey: env.ZEROEX_API_KEY,
-    liveWalletAddress: env.LIVE_WALLET_ADDRESS
+    baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
+    liveWalletAddress: env.LIVE_WALLET_ADDRESS,
+    livePrivateKey: env.LIVE_PRIVATE_KEY,
+    liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true"
   };
 }
