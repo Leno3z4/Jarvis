@@ -5,6 +5,7 @@ export interface TradeRequest {
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
   amountInWei: bigint;
+  amountOutWei: bigint;
   slippageBps: number;
   reason: string;
 }
@@ -14,6 +15,7 @@ export interface TradeResult {
   status: "simulated" | "submitted" | "rejected";
   txHash?: `0x${string}`;
   request: TradeRequest;
+  amountOutWei?: bigint;
   message?: string;
 }
 
