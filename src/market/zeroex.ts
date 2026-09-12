@@ -18,7 +18,12 @@ interface ZeroExQuoteResponse {
     gasPrice?: string;
   };
   liquidityAvailable?: boolean;
-  issues?: unknown;
+  allowanceTarget?: string;
+  issues?: {
+    allowance?: { actual: string; spender: string; required?: string } | null;
+    balance?: { token: string; actual: string; expected: string } | null;
+    simulationIncomplete?: boolean;
+  };
 }
 
 export interface ExecutableQuote extends Quote {
@@ -30,6 +35,9 @@ export interface ExecutableQuote extends Quote {
     gasPrice?: bigint;
   };
   allowanceTarget?: `0x${string}`;
+  allowanceRequired?: bigint;
+  balanceIssue?: boolean;
+  simulationIncomplete?: boolean;
 }
 
 export class ZeroExQuoteProvider implements QuoteProvider {
@@ -69,9 +77,15 @@ export class ZeroExQuoteProvider implements QuoteProvider {
     if (data.liquidityAvailable === false) {
       throw new Error("0x reports no liquidity for this route.");
     }
+    if (data.issues?.balance) {
+      throw new Error("Wallet balance is insufficient for the requested trade.");
+    }
     if (!data.transaction?.to || !data.transaction.data) {
       throw new Error("0x returned no executable transaction.");
     }
+
+    const allowance = data.issues?.allowance ?? null;
+    const spender = allowance?.spender ?? data.allowanceTarget;
 
     return {
       tokenIn: request.tokenIn,
@@ -88,7 +102,11 @@ export class ZeroExQuoteProvider implements QuoteProvider {
         value: BigInt(data.transaction.value ?? "0"),
         gas: data.transaction.gas ? BigInt(data.transaction.gas) : undefined,
         gasPrice: data.transaction.gasPrice ? BigInt(data.transaction.gasPrice) : undefined
-      }
+      },
+      allowanceTarget: spender as `0x${string}` | undefined,
+      allowanceRequired: allowance?.required ? BigInt(allowance.required) : undefined,
+      balanceIssue: Boolean(data.issues?.balance),
+      simulationIncomplete: Boolean(data.issues?.simulationIncomplete)
     };
   }
 }
