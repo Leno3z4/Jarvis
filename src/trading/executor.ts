@@ -1,3 +1,4 @@
+import { BaseLiveExecutor, type LiveExecutionConfig } from "./live";
 import type { TradeRequest, TradeResult } from "./types";
 
 export interface TradeExecutor {
@@ -10,24 +11,25 @@ export class PaperExecutor implements TradeExecutor {
       mode: "paper",
       status: "simulated",
       request,
-      message: "Paper trade simulated; no blockchain transaction was submitted."
+      amountOutWei: request.amountOutWei,
+      message: "Paper execution is handled by the persistent portfolio layer."
     };
   }
 }
 
 export class LiveExecutor implements TradeExecutor {
-  async execute(request: TradeRequest): Promise<TradeResult> {
-    // Intentionally fail closed until the live wallet + router are wired.
-    // This prevents an accidental live transaction during development.
-    return {
-      mode: "live",
-      status: "rejected",
-      request,
-      message: "Live execution is not enabled yet."
-    };
-  }
-}
+  constructor(private readonly config: LiveExecutionConfig) {}
 
-export function createExecutor(mode: "paper" | "live"): TradeExecutor {
-  return mode === "paper" ? new PaperExecutor() : new LiveExecutor();
+  async execute(request: TradeRequest): Promise<TradeResult> {
+    try {
+      return await new BaseLiveExecutor().execute(request, this.config);
+    } catch (error) {
+      return {
+        mode: "live",
+        status: "rejected",
+        request,
+        message: error instanceof Error ? error.message : "Live execution failed."
+      };
+    }
+  }
 }
