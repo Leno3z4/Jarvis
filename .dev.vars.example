@@ -8,3 +8,9 @@ MAX_EXPOSURE_WEI=500000000000000000
 # Paper account configuration. Set this to the Base token you want to treat as cash.
 PAPER_CASH_TOKEN=0x0000000000000000000000000000000000000000
 PAPER_STARTING_CASH_WEI=1000000000000000000
+
+# Server-side 0x credentials. Do not commit real values.
+ZEROEX_API_KEY=
+
+# Wallet address only for firm quote/taker identification; never store its private key here.
+LIVE_WALLET_ADDRESS=
