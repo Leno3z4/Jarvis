@@ -18,10 +18,23 @@ TRADING_MODE=live
 
 Paper mode persists balances and executed paper fills in the SQLite-backed Durable Object. Live execution is implemented through 0x Swap API v2 + viem, but remains disabled unless `LIVE_TRADING_ENABLED=true` is explicitly set.
 
+## Pipeline
+
+```text
+market scanner
+    -> deterministic liquidity / volume / momentum filters
+    -> Gemini structured decision
+    -> deterministic risk validation
+    -> paper or live executor
+```
+
+Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transactions, choose transaction calldata, or bypass risk controls. The Gemini client automatically fails over across the configured primary, fallback 1, and fallback 2 candidates on quota/transient failures.
+
 ## API
 
 ```text
 GET  /health
+POST /ai/generate
 POST /quote
 GET  /portfolio
 POST /paper/reset
