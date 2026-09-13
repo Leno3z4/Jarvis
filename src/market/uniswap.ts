@@ -54,9 +54,15 @@ async function poolInfo(
 ): Promise<PoolInfo[]> {
   if (token.toLowerCase() === quoteToken.toLowerCase()) return [];
 
+  // The pool-info API expects tokenAddressA/tokenAddressB in its canonical
+  // ordering; passing the reverse order can trigger the API's ADDRESSES
+  // invariant even when the pair itself exists.
+  const [tokenAddressA, tokenAddressB] = [token, quoteToken]
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
   const poolParameters: Record<string, unknown> = {
-    tokenAddressA: token,
-    tokenAddressB: quoteToken
+    tokenAddressA,
+    tokenAddressB
   };
 
   if (protocol === "V3") {
