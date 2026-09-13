@@ -28,9 +28,10 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   let score = 0;
 
   if (market.dataCompleteness === "quote-only") {
-    // Quote-only discovery proves there is a live Uniswap route and gives us
-    // a current executable price, but it does not provide trustworthy liquidity,
-    // volume, or momentum numbers. Do not fabricate those metrics.
+    // A live quote proves a route exists, but does not establish the liquidity,
+    // volume, or momentum data required by the strategy. Keep this below the
+    // execution eligibility threshold and never send it to Gemini as a trading
+    // candidate based on fabricated or missing market metrics.
     score += 40;
     reasons.push("live Uniswap quote available");
     reasons.push("liquidity unavailable from current provider");
@@ -92,7 +93,7 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     market,
     score,
     reasons,
-    eligible: score >= config.minScore
+    eligible: market.dataCompleteness !== "quote-only" && score >= config.minScore
   };
 }
 
