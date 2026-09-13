@@ -5,6 +5,9 @@ const POOL_API_URL = "https://liquidity.api.uniswap.org/lp/pool_info";
 const CHAIN_ID = 8453;
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
 const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
+const PROTOCOLS = ["V3", "V2", "V4"] as const;
+
+type Protocol = (typeof PROTOCOLS)[number];
 
 interface UniswapToken {
   name?: string;
@@ -47,7 +50,8 @@ function positiveNumber(value: unknown): number {
 async function poolInfo(
   apiKey: string,
   token: `0x${string}`,
-  quoteToken: `0x${string}`
+  quoteToken: `0x${string}`,
+  protocol: Protocol
 ): Promise<PoolInfo[]> {
   const response = await fetch(POOL_API_URL, {
     method: "POST",
@@ -57,7 +61,7 @@ async function poolInfo(
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      protocol: "V3",
+      protocol,
       chainId: CHAIN_ID,
       poolParameters: {
         tokenAddressA: token,
@@ -70,7 +74,7 @@ async function poolInfo(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Uniswap pool lookup failed (${response.status}): ${body.slice(0, 300)}`);
+    throw new Error(`Uniswap ${protocol} pool lookup failed (${response.status}): ${body.slice(0, 200)}`);
   }
 
   const data = (await response.json()) as PoolResponse;
@@ -82,9 +86,11 @@ function marketFromPool(
   pool: PoolInfo,
   quoteToken: `0x${string}`
 ): TokenMarket | null {
+  if (!token.address) return null;
+
   const tokenA = pool.tokenAddressA?.toLowerCase();
   const tokenB = pool.tokenAddressB?.toLowerCase();
-  const tokenLower = token.address!.toLowerCase();
+  const tokenLower = token.address.toLowerCase();
   const quoteLower = quoteToken.toLowerCase();
 
   if (![tokenA, tokenB].includes(tokenLower) || ![tokenA, tokenB].includes(quoteLower)) return null;
@@ -99,13 +105,8 @@ function marketFromPool(
 
   const tokenAmount = rawToken / 10 ** tokenDecimals;
   const quoteAmount = rawQuote / 10 ** quoteDecimals;
-  const priceUsd = quoteLower === BASE_USDC.toLowerCase()
-    ? quoteAmount / tokenAmount
-    : 0;
-
-  const liquidityUsd = quoteLower === BASE_USDC.toLowerCase()
-    ? quoteAmount * 2
-    : 0;
+  const priceUsd = quoteLower === BASE_USDC.toLowerCase() ? quoteAmount / tokenAmount : 0;
+  const liquidityUsd = quoteLower === BASE_USDC.toLowerCase() ? quoteAmount * 2 : 0;
 
   return {
     address: token.address as `0x${string}`,
@@ -161,30 +162,38 @@ export class UniswapTokenProvider {
   async discoverBaseMarkets(limit = 15): Promise<TokenMarket[]> {
     const tokens = (await this.discoverBaseTokenAddresses(Math.min(limit, 20))).slice(0, Math.min(limit, 20));
     const markets: TokenMarket[] = [];
+    const failures: string[] = [];
 
     for (let index = 0; index < tokens.length; index += 3) {
       const batch = tokens.slice(index, index + 3);
       const results = await Promise.all(batch.map(async (token) => {
-        try {
-          const usdcPools = await poolInfo(this.apiKey, token.address, BASE_USDC);
-          const usdcMarkets = usdcPools
-            .map((pool) => marketFromPool(token, pool, BASE_USDC))
-            .filter((market): market is TokenMarket => market !== null)
-            .sort((a, b) => b.liquidityUsd - a.liquidityUsd);
-          if (usdcMarkets[0]) return usdcMarkets[0];
+        const candidates: TokenMarket[] = [];
 
-          const wethPools = await poolInfo(this.apiKey, token.address, BASE_WETH);
-          const wethMarkets = wethPools
-            .map((pool) => marketFromPool(token, pool, BASE_WETH))
-            .filter((market): market is TokenMarket => market !== null)
-            .sort((a, b) => b.liquidityUsd - a.liquidityUsd);
-          return wethMarkets[0] ?? null;
-        } catch {
-          return null;
+        for (const protocol of PROTOCOLS) {
+          for (const quote of [BASE_USDC, BASE_WETH] as const) {
+            try {
+              const pools = await poolInfo(this.apiKey, token.address, quote, protocol);
+              candidates.push(
+                ...pools
+                  .map((pool) => marketFromPool(token, pool, quote))
+                  .filter((market): market is TokenMarket => market !== null)
+              );
+            } catch (error) {
+              failures.push(`${token.symbol}:${protocol}:${quote.slice(0, 8)}:${error instanceof Error ? error.message : "unknown"}`);
+            }
+          }
         }
+
+        return candidates
+          .filter((market) => market.liquidityUsd > 0 && market.priceUsd > 0)
+          .sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0] ?? null;
       }));
 
       markets.push(...results.filter((market): market is TokenMarket => market !== null));
+    }
+
+    if (markets.length === 0 && failures.length > 0) {
+      throw new Error(`No Base Uniswap markets discovered. Sample pool errors: ${failures.slice(0, 3).join(" | ")}`);
     }
 
     return markets;
