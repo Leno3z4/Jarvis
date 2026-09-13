@@ -43,7 +43,7 @@ export async function analyzeCandidate(
   candidate: CandidateScore,
   geminiCandidates: GeminiCandidate[]
 ): Promise<{ decision: StrategyDecision; provider: { role: string; model: string } }> {
-  const prompt = `You are Jarvis, a crypto trading decision assistant. Analyze ONLY the supplied market snapshot. Do not invent prices, liquidity, volume, news, or on-chain facts. Never request calldata, wallet actions, or transaction parameters.
+  const prompt = `You are Jarvis, a crypto trading decision assistant. Analyze ONLY the supplied market snapshot. Do not invent prices, liquidity, volume, momentum, news, or on-chain facts. Treat unavailable fields as unavailable. Never request calldata, wallet actions, or transaction parameters.
 
 Return JSON only with exactly these fields:
 - decision: BUY | SELL | HOLD | SKIP
@@ -61,6 +61,7 @@ ${JSON.stringify({
   liquidityUsd: candidate.market.liquidityUsd,
   volume24hUsd: candidate.market.volume24hUsd,
   change24hPct: candidate.market.change24hPct,
+  dataCompleteness: candidate.market.dataCompleteness ?? "full",
   scannerScore: candidate.score,
   scannerReasons: candidate.reasons
 })}`;
