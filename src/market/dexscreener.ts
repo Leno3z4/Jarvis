@@ -26,6 +26,37 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function toMarket(pair: Pair): TokenMarket {
+  return {
+    address: pair.baseToken!.address as `0x${string}`,
+    symbol: pair.baseToken?.symbol ?? "UNKNOWN",
+    decimals: 18,
+    priceUsd: Number(pair.priceUsd ?? 0),
+    liquidityUsd: num(pair.liquidity?.usd),
+    volume24hUsd: num(pair.volume?.h24),
+    change24hPct: num(pair.priceChange?.h24),
+    observedAt: Date.now()
+  };
+}
+
+function bestBasePairs(pairs: Pair[], limit: number): TokenMarket[] {
+  const bestByToken = new Map<string, Pair>();
+
+  for (const pair of pairs) {
+    if (pair.chainId !== BASE_CHAIN || !isAddress(pair.baseToken?.address)) continue;
+    const address = pair.baseToken!.address!.toLowerCase();
+    const current = bestByToken.get(address);
+    if (!current || num(pair.liquidity?.usd) > num(current.liquidity?.usd)) {
+      bestByToken.set(address, pair);
+    }
+  }
+
+  return [...bestByToken.values()]
+    .sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd))
+    .slice(0, Math.min(limit, 30))
+    .map(toMarket);
+}
+
 export class DexScreenerMarketProvider implements MarketProvider {
   async getToken(address: `0x${string}`): Promise<TokenMarket> {
     const response = await fetch(
@@ -59,53 +90,56 @@ export class DexScreenerMarketProvider implements MarketProvider {
     };
   }
 
+  private async discoverFromSearch(limit: number): Promise<TokenMarket[]> {
+    const queries = ["WETH", "USDC"];
+    const pairs: Pair[] = [];
+
+    for (const query of queries) {
+      const response = await fetch(
+        `${API_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`,
+        { headers: { accept: "application/json" } }
+      );
+      if (!response.ok) continue;
+      const data = (await response.json()) as { pairs?: Pair[] };
+      pairs.push(...(data.pairs ?? []));
+    }
+
+    return bestBasePairs(pairs, limit);
+  }
+
   async discoverBaseMarkets(limit = 30): Promise<TokenMarket[]> {
     const profilesResponse = await fetch(`${API_BASE}/token-profiles/latest/v1`, {
       headers: { accept: "application/json" }
     });
 
-    if (!profilesResponse.ok) {
-      throw new Error(`DexScreener profile discovery failed (${profilesResponse.status}).`);
-    }
+    if (profilesResponse.ok) {
+      const profiles = (await profilesResponse.json()) as TokenProfile[];
+      const addresses = profiles
+        .filter((profile) => profile.chainId === BASE_CHAIN && isAddress(profile.tokenAddress))
+        .map((profile) => profile.tokenAddress as `0x${string}`)
+        .slice(0, Math.min(limit, 30));
 
-    const profiles = (await profilesResponse.json()) as TokenProfile[];
-    const addresses = profiles
-      .filter((profile) => profile.chainId === BASE_CHAIN && isAddress(profile.tokenAddress))
-      .map((profile) => profile.tokenAddress as `0x${string}`)
-      .slice(0, Math.min(limit, 30));
+      if (addresses.length === 0) return [];
 
-    if (addresses.length === 0) return [];
+      const response = await fetch(
+        `${API_BASE}/latest/dex/tokens/${addresses.join(",")}`,
+        { headers: { accept: "application/json" } }
+      );
 
-    const response = await fetch(
-      `${API_BASE}/latest/dex/tokens/${addresses.join(",")}`,
-      { headers: { accept: "application/json" } }
-    );
-
-    if (!response.ok) {
-      throw new Error(`DexScreener batch lookup failed (${response.status}).`);
-    }
-
-    const data = (await response.json()) as { pairs?: Pair[] };
-    const bestByToken = new Map<string, Pair>();
-
-    for (const pair of data.pairs ?? []) {
-      if (pair.chainId !== BASE_CHAIN || !isAddress(pair.baseToken?.address)) continue;
-      const address = pair.baseToken!.address!.toLowerCase();
-      const current = bestByToken.get(address);
-      if (!current || num(pair.liquidity?.usd) > num(current.liquidity?.usd)) {
-        bestByToken.set(address, pair);
+      if (!response.ok) {
+        throw new Error(`DexScreener batch lookup failed (${response.status}).`);
       }
+
+      const data = (await response.json()) as { pairs?: Pair[] };
+      return bestBasePairs(data.pairs ?? [], limit);
     }
 
-    return [...bestByToken.values()].map((pair) => ({
-      address: pair.baseToken!.address as `0x${string}`,
-      symbol: pair.baseToken?.symbol ?? "UNKNOWN",
-      decimals: 18,
-      priceUsd: Number(pair.priceUsd ?? 0),
-      liquidityUsd: num(pair.liquidity?.usd),
-      volume24hUsd: num(pair.volume?.h24),
-      change24hPct: num(pair.priceChange?.h24),
-      observedAt: Date.now()
-    }));
+    if (profilesResponse.status === 429) {
+      const fallback = await this.discoverFromSearch(limit);
+      if (fallback.length > 0) return fallback;
+      throw new Error("DexScreener discovery is rate limited; search fallback returned no Base markets.");
+    }
+
+    throw new Error(`DexScreener profile discovery failed (${profilesResponse.status}).`);
   }
 }
