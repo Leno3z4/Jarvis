@@ -29,7 +29,7 @@ DexScreener Base discovery
     -> paper or live executor
 ```
 
-The strategy scan runs from Cron every five minutes when its required credentials are configured and persists the latest opportunities in the Durable Object. It does not automatically submit a trade yet.
+The strategy scan runs from Cron every five minutes when its required credentials are configured and persists the latest opportunities in the Durable Object. Autonomous paper cycles can execute paper fills; live mode remains guarded separately.
 
 Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transactions, choose transaction calldata, or bypass risk controls. The Gemini client automatically fails over across the configured primary, fallback 1, and fallback 2 candidates on quota/transient failures.
 
@@ -39,14 +39,16 @@ Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transa
 GET  /health
 POST /ai/generate
 POST /strategy/scan
+POST /strategy/run
 GET  /strategy/latest
 POST /quote
 GET  /portfolio
+GET  /trades
 POST /paper/reset
 POST /trade
 ```
 
-`POST /strategy/scan` discovers Base tokens, scores them, asks Gemini for validated decisions, obtains an execution quote for eligible candidates, and stores the result.
+`GET /portfolio` and `GET /trades` are used by the Vercel dashboard to render current portfolio state and the realized-PnL history.
 
 `POST /trade` expects integer amounts as strings because JSON does not support `bigint`:
 
@@ -60,6 +62,23 @@ POST /trade
   "reason": "strategy signal"
 }
 ```
+
+## Dashboard / Vercel
+
+The frontend lives in `dashboard/` and is designed to deploy as a separate Vercel project using this repository.
+
+In Vercel, set **Root Directory** to `dashboard`. The dashboard uses Next.js 16 and has no chart dependency; the PnL chart is rendered as SVG.
+
+Set these Vercel environment variables:
+
+```env
+NEXT_PUBLIC_JARVIS_API_URL=https://YOUR-JARVIS-WORKER.workers.dev
+NEXT_PUBLIC_CASH_DECIMALS=18
+```
+
+Set `NEXT_PUBLIC_CASH_DECIMALS` to the decimals of the configured `PAPER_CASH_TOKEN` (for example, a 6-decimal stablecoin uses `6`).
+
+The Worker API currently exposes read-only dashboard telemetry without authentication. Before making a live trading dashboard public, add dashboard authentication or an origin/token gate.
 
 ## Live safety
 
@@ -78,10 +97,20 @@ The private key must be stored as a Cloudflare secret in deployment, never commi
 
 ## Development
 
+Bot:
+
 ```bash
 npm install
 npm run types
 npm run check
+npm run dev
+```
+
+Dashboard:
+
+```bash
+cd dashboard
+npm install
 npm run dev
 ```
 
