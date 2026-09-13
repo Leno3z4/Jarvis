@@ -33,9 +33,10 @@ function rejectionSummary(
   const top = opportunities
     .slice(0, 3)
     .map((item) => {
+      const geminiDetail = `Gemini ${item.decision.decision} confidence=${item.decision.confidence.toFixed(2)} risk=${item.decision.risk}: ${item.decision.reason}`;
       const reason = item.rejectionReason
-        ? item.rejectionReason
-        : `Gemini ${item.decision.decision} (${item.decision.confidence.toFixed(2)}, ${item.decision.risk}): ${item.decision.reason}`;
+        ? `${item.rejectionReason} ${geminiDetail}`
+        : geminiDetail;
       return `${item.market.symbol} score=${item.scannerScore}: ${reason}`;
     })
     .join(" | ");
