@@ -1,12 +1,12 @@
-import { getConfig, type Env } from "./config";
-import { generateWithFallbacks, type GeminiRequest } from "./ai/gemini";
-import { runStrategyScan } from "./strategy/runtime";
-import { evaluateAutomation } from "./strategy/automation";
-import { ZeroExQuoteProvider } from "./market/zeroex";
-import { createExecutor } from "./trading/executor";
-import { applyPaperFill } from "./trading/portfolio";
-import { validateTrade } from "./trading/risk";
-import type { Portfolio, TradeRequest } from "./trading/types";
+import { getConfig, type Env } from "../config";
+import { generateWithFallbacks, type GeminiRequest } from "../ai/gemini";
+import { runStrategyScan } from "../strategy/runtime";
+import { evaluateAutomation } from "../strategy/automation";
+import { ZeroExQuoteProvider } from "../market/zeroex";
+import { createExecutor } from "../trading/executor";
+import { applyPaperFill } from "../trading/portfolio";
+import { validateTrade } from "../trading/risk";
+import type { Portfolio, TradeRequest } from "../trading/types";
 
 interface TradePayload {
   tokenIn: `0x${string}`;
@@ -378,26 +378,36 @@ export default {
         return corsJson({ ok: true, ...result });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Gemini request failed.";
-        return corsJson({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: message }, { status: 502 });
       }
     }
 
     if (url.pathname === "/strategy/scan" && request.method === "POST") {
       try {
-        return await runAndPersistStrategy(env, config);
+        const scanResult = await runStrategyScan({
+          gemini: [
+            { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
+            { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
+            { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
+          ],
+          strategy: { ...config.strategy, cashToken: config.paperCashToken },
+          zeroExApiKey: config.zeroExApiKey,
+          takerAddress: config.mode === "paper" ? config.paperTakerAddress : config.liveWalletAddress,
+          limit: 30
+        });
+        return corsJson({ ok: true, result: serializeStrategyResult(scanResult) });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Strategy scan failed.";
-        return corsJson({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: error instanceof Error ? error.message : "Strategy scan failed." }, { status: 502 });
       }
     }
 
     if (url.pathname === "/strategy/run" && request.method === "POST") {
       try {
-        const result = await runAutonomousPaperCycle(env, config);
-        return corsJson({ ok: true, ...result });
+        const response = await runAndPersistStrategy(env, config);
+        if (!response.ok) throw new Error("Failed to persist strategy result.");
+        return corsJson({ ok: true });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Autonomous strategy run failed.";
-        return corsJson({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: error instanceof Error ? error.message : "Strategy run failed." }, { status: 503 });
       }
     }
 
@@ -407,81 +417,80 @@ export default {
 
     if (url.pathname === "/quote" && request.method === "POST") {
       try {
-        if (!config.zeroExApiKey || !config.liveWalletAddress) {
-          return corsJson({ ok: false, error: "Quote provider is not configured." }, { status: 503 });
-        }
-        const payload = (await request.json()) as QuotePayload;
-        const provider = new ZeroExQuoteProvider(config.zeroExApiKey, config.liveWalletAddress);
+        const body = (await request.json()) as QuotePayload;
+        const provider = new ZeroExQuoteProvider(config.zeroExApiKey);
         const quote = await provider.getQuote({
-          tokenIn: payload.tokenIn,
-          tokenOut: payload.tokenOut,
-          amountInWei: BigInt(payload.amountInWei),
-          slippageBps: payload.slippageBps
+          tokenIn: body.tokenIn,
+          tokenOut: body.tokenOut,
+          amountInWei: BigInt(body.amountInWei),
+          takerAddress: config.mode === "paper" ? config.paperTakerAddress : config.liveWalletAddress,
+          slippageBps: body.slippageBps
         });
         return corsJson({ ok: true, quote: serializeQuote(quote) });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Quote request failed.";
-        return corsJson({ ok: false, error: message }, { status: 502 });
+        return corsJson({ ok: false, error: error instanceof Error ? error.message : "Quote failed." }, { status: 502 });
       }
     }
 
     if (url.pathname === "/portfolio" && request.method === "GET") {
-      return getStateStub(env).fetch(`https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`);
+      return getStateStub(env).fetch(
+        `https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`
+      );
     }
 
     if (url.pathname === "/trades" && request.method === "GET") {
-      return getStateStub(env).fetch(`https://jarvis.internal/trades?limit=${encodeURIComponent(url.searchParams.get("limit") ?? "100")}`);
+      return getStateStub(env).fetch(`https://jarvis.internal/trades?limit=${url.searchParams.get("limit") ?? "100"}`);
     }
 
     if (url.pathname === "/paper/reset" && request.method === "POST") {
-      if (config.mode !== "paper") return corsJson({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
-      return getStateStub(env).fetch(new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" }));
+      return getStateStub(env).fetch(
+        new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, {
+          method: "POST"
+        })
+      );
     }
 
     if (url.pathname === "/trade" && request.method === "POST") {
       try {
-        const trade = parseTradePayload((await request.json()) as TradePayload);
-        const riskError = validateTrade(trade, config.risk);
-        if (riskError) return corsJson({ ok: false, error: riskError }, { status: 400 });
+        const body = (await request.json()) as TradePayload;
+        const trade = parseTradePayload(body);
+        const validation = validateTrade(trade, config.risk);
+        if (validation) return corsJson({ ok: false, error: validation }, { status: 400 });
 
         if (config.mode === "paper") {
-          return getStateStub(env).fetch(new Request(
-            `https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
-            {
+          const result = await getStateStub(env).fetch(
+            new Request(`https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, {
               method: "POST",
-              body: JSON.stringify(serializeTrade(trade)),
-              headers: { "content-type": "application/json" }
-            }
-          ));
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(serializeTrade(trade))
+            })
+          );
+          return result;
         }
 
-        const liveConfig = {
-          apiKey: config.zeroExApiKey ?? "",
-          rpcUrl: config.baseRpcUrl,
-          privateKey: config.livePrivateKey ?? "",
-          walletAddress: config.liveWalletAddress ?? "0x0000000000000000000000000000000000000000" as `0x${string}`,
-          enabled: config.liveTradingEnabled
-        };
-        const result = await createExecutor("live", liveConfig).execute(trade);
+        const executor = createExecutor(config);
+        const result = await executor.execute(trade);
         return corsJson({ ok: result.status !== "rejected", result });
-      } catch {
-        return corsJson({ ok: false, error: "Invalid trade payload." }, { status: 400 });
+      } catch (error) {
+        return corsJson({ ok: false, error: error instanceof Error ? error.message : "Trade failed." }, { status: 400 });
       }
     }
 
-    return corsJson({
-      service: "Jarvis",
-      mode: config.mode,
-      endpoints: ["/health", "POST /ai/generate", "POST /strategy/scan", "POST /strategy/run", "GET /strategy/latest", "POST /quote", "/portfolio", "/trades", "POST /paper/reset", "POST /trade"]
-    });
+    if (url.pathname === "/strategy/run" && request.method === "POST") {
+      return corsJson({ ok: false, error: "Strategy route unavailable." }, { status: 503 });
+    }
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      return corsJson({ ok: true });
+    }
+
+    return corsJson({ ok: false, error: "Not found" }, { status: 404 });
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     const config = getConfig(env);
     if (config.mode === "paper") {
       await runAutonomousPaperCycle(env, config);
-    } else if (config.gemini.primaryKey && config.zeroExApiKey && config.liveWalletAddress) {
-      await runAndPersistStrategy(env, config);
     }
   }
 };
