@@ -18,8 +18,8 @@ export async function runStrategyScan(config: {
     throw new Error("Uniswap API key is required for Base token discovery.");
   }
 
-  const limit = Math.min(config.limit ?? 15, 15);
-  const uniswap = new UniswapTokenProvider(uniswapApiKey);
+  const limit = Math.min(config.limit ?? 5, 5);
+  const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
   const markets = await uniswap.discoverBaseMarkets(limit);
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
 
