@@ -221,7 +221,7 @@ export class TradingBotState {
   }
 
   private ensurePaperAccount(cashToken: `0x${string}`, startingCashWei: bigint): void {
-    const existing = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'cash_token'").one();
+    const existing = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'cash_token'").toArray()[0];
     if (!existing) {
       this.sql.exec("INSERT INTO meta(key, value) VALUES ('cash_token', ?)", cashToken.toLowerCase());
       this.sql.exec("INSERT INTO balances(token, amount) VALUES (?, ?)", cashToken.toLowerCase(), startingCashWei.toString());
@@ -232,7 +232,7 @@ export class TradingBotState {
   private portfolio(cashToken: `0x${string}`, startingCashWei: bigint): Portfolio {
     this.ensurePaperAccount(cashToken, startingCashWei);
     const balanceRows = this.sql.exec<{ token: string; amount: string }>("SELECT token, amount FROM balances").toArray();
-    const pnl = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'realized_pnl_wei'").one();
+    const pnl = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'realized_pnl_wei'").toArray()[0];
     const positions: Record<string, bigint> = {};
     let cashWei = 0n;
 
@@ -296,7 +296,7 @@ export class TradingBotState {
     }
 
     if (url.pathname === "/strategy/latest" && request.method === "GET") {
-      const latest = this.sql.exec<{ payload: string; created_at: string }>("SELECT payload, created_at FROM strategy_runs ORDER BY id DESC LIMIT 1").one();
+      const latest = this.sql.exec<{ payload: string; created_at: string }>("SELECT payload, created_at FROM strategy_runs ORDER BY id DESC LIMIT 1").toArray()[0];
       return corsJson(latest ? { ...JSON.parse(latest.payload), createdAt: latest.created_at } : { discovered: 0, opportunities: [] });
     }
 
