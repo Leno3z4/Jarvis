@@ -5,6 +5,8 @@ const POOL_API_URL = "https://liquidity.api.uniswap.org/lp/pool_info";
 const CHAIN_ID = 8453;
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
 const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
+const NATIVE_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const PROTOCOLS = ["V3", "V2"] as const;
 const V3_FEES = [100, 500, 3000, 10_000] as const;
 
@@ -40,6 +42,11 @@ function isAddress(value: unknown): value is `0x${string}` {
   return typeof value === "string" && ADDRESS_RE.test(value);
 }
 
+function isErc20Address(value: string): boolean {
+  const lower = value.toLowerCase();
+  return lower !== NATIVE_SENTINEL.toLowerCase() && lower !== ZERO_ADDRESS.toLowerCase();
+}
+
 function positiveNumber(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value ?? 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -54,9 +61,6 @@ async function poolInfo(
 ): Promise<PoolInfo[]> {
   if (token.toLowerCase() === quoteToken.toLowerCase()) return [];
 
-  // The pool-info API expects tokenAddressA/tokenAddressB in its canonical
-  // ordering; passing the reverse order can trigger the API's ADDRESSES
-  // invariant even when the pair itself exists.
   const [tokenAddressA, tokenAddressB] = [token, quoteToken]
     .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
@@ -162,7 +166,7 @@ export class UniswapTokenProvider {
       .filter((token) => Number(token.chainId) === CHAIN_ID && isAddress(token.address))
       .filter((token) => {
         const address = token.address!.toLowerCase();
-        return address !== BASE_USDC.toLowerCase() && address !== BASE_WETH.toLowerCase();
+        return isErc20Address(token.address!) && address !== BASE_USDC.toLowerCase() && address !== BASE_WETH.toLowerCase();
       })
       .map((token) => ({
         address: token.address as `0x${string}`,
