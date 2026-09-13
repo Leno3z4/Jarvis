@@ -1,4 +1,5 @@
 import { getConfig, type Env } from "./config";
+import { generateWithFallbacks, type GeminiRequest } from "./ai/gemini";
 import { ZeroExQuoteProvider } from "./market/zeroex";
 import { createExecutor } from "./trading/executor";
 import { applyPaperFill } from "./trading/portfolio";
@@ -77,9 +78,6 @@ function serializeQuote(quote: Awaited<ReturnType<ZeroExQuoteProvider["getQuote"
     estimatedGasWei: quote.estimatedGasWei?.toString(),
     provider: quote.provider,
     observedAt: quote.observedAt,
-    allowanceTarget: quote.allowanceTarget,
-    allowanceRequired: quote.allowanceRequired?.toString(),
-    simulationIncomplete: quote.simulationIncomplete,
     transaction: {
       to: quote.transaction.to,
       data: quote.transaction.data,
@@ -241,8 +239,31 @@ export default {
       return Response.json({
         ok: true,
         mode: config.mode,
-        liveTradingEnabled: config.liveTradingEnabled
+        liveTradingEnabled: config.liveTradingEnabled,
+        geminiFallbacksConfigured: [
+          Boolean(config.gemini.primaryKey),
+          Boolean(config.gemini.fallback1Key),
+          Boolean(config.gemini.fallback2Key)
+        ].filter(Boolean).length
       });
+    }
+
+    if (url.pathname === "/ai/generate" && request.method === "POST") {
+      try {
+        const body = (await request.json()) as GeminiRequest;
+        const result = await generateWithFallbacks(
+          [
+            { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
+            { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
+            { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
+          ],
+          body
+        );
+        return Response.json({ ok: true, ...result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gemini request failed.";
+        return Response.json({ ok: false, error: message }, { status: 503 });
+      }
     }
 
     if (url.pathname === "/quote" && request.method === "POST") {
@@ -330,7 +351,7 @@ export default {
     return Response.json({
       service: "Jarvis",
       mode: config.mode,
-      endpoints: ["/health", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
+      endpoints: ["/health", "POST /ai/generate", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
     });
   },
 
