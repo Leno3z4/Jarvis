@@ -27,29 +27,41 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const reasons: string[] = [];
   let score = 0;
 
-  if (market.liquidityUsd >= config.minLiquidityUsd) {
-    score += 30;
-    reasons.push("healthy liquidity");
-  } else {
-    reasons.push("liquidity below floor");
-  }
+  if (market.dataCompleteness === "liquidity-price-only") {
+    if (market.liquidityUsd >= config.minLiquidityUsd) {
+      score += 30;
+      reasons.push("healthy liquidity");
+    } else {
+      reasons.push("liquidity below floor");
+    }
 
-  if (market.volume24hUsd >= config.minVolume24hUsd) {
-    score += 25;
-    reasons.push("sufficient 24h volume");
+    reasons.push("volume unavailable from current provider");
+    reasons.push("momentum unavailable from current provider");
   } else {
-    reasons.push("volume below floor");
-  }
+    if (market.liquidityUsd >= config.minLiquidityUsd) {
+      score += 30;
+      reasons.push("healthy liquidity");
+    } else {
+      reasons.push("liquidity below floor");
+    }
 
-  if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) {
-    score += 25;
-    reasons.push("positive momentum");
-  } else if (market.change24hPct < 0) {
-    score -= 10;
-    reasons.push("negative momentum");
-  } else if (market.change24hPct > config.maxChange24hPct) {
-    score -= 25;
-    reasons.push("momentum too extended");
+    if (market.volume24hUsd >= config.minVolume24hUsd) {
+      score += 25;
+      reasons.push("sufficient 24h volume");
+    } else {
+      reasons.push("volume below floor");
+    }
+
+    if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) {
+      score += 25;
+      reasons.push("positive momentum");
+    } else if (market.change24hPct < 0) {
+      score -= 10;
+      reasons.push("negative momentum");
+    } else if (market.change24hPct > config.maxChange24hPct) {
+      score -= 25;
+      reasons.push("momentum too extended");
+    }
   }
 
   const staleMs = Date.now() - market.observedAt;
@@ -64,7 +76,7 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     score += 10;
     reasons.push("valid price");
   } else {
-    reasons.push("invalid price");
+    reasons.push("price unavailable");
   }
 
   return {
