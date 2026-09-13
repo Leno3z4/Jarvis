@@ -8,6 +8,7 @@ export interface TradeRequest {
   amountOutWei: bigint;
   slippageBps: number;
   reason: string;
+  idempotencyKey?: string;
 }
 
 export interface TradeResult {
@@ -28,4 +29,17 @@ export interface Portfolio {
 export interface RiskLimits {
   maxTradeWei: bigint;
   maxPortfolioExposureWei: bigint;
+  maxTokenExposureWei: bigint;
+  maxOpenPositions: number;
+  maxTradesPerDay: number;
+  cooldownSeconds: number;
+  maxDailyLossWei: bigint;
+}
+
+export interface RiskState {
+  killSwitch: boolean;
+  dayKey: string;
+  dailyLossWei: bigint;
+  dailyTrades: number;
+  lastTradeAtByToken: Record<string, number>;
 }
