@@ -22,6 +22,25 @@ export interface AutomationResult {
   blockedReason?: string;
 }
 
+function rejectionSummary(
+  discovered: number,
+  opportunities: AutomationResult["opportunities"]
+): string {
+  if (opportunities.length === 0) {
+    return `No strategy candidates passed the deterministic scanner (discovered ${discovered} markets).`;
+  }
+
+  const top = opportunities
+    .slice(0, 3)
+    .map((item) => {
+      const reason = item.rejectionReason ?? `Gemini ${item.decision.decision} (${item.decision.confidence.toFixed(2)}, ${item.decision.risk})`;
+      return `${item.market.symbol} score=${item.scannerScore}: ${reason}`;
+    })
+    .join(" | ");
+
+  return `No executable opportunity found (discovered ${discovered}). ${top}`;
+}
+
 export async function evaluateAutomation(config: AutomationConfig): Promise<AutomationResult> {
   const result = await runStrategyScan({
     gemini: config.gemini,
@@ -36,7 +55,7 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     return {
       discovered: result.discovered,
       opportunities: result.opportunities,
-      blockedReason: result.opportunities[0]?.rejectionReason ?? "No executable opportunity found."
+      blockedReason: rejectionSummary(result.discovered, result.opportunities)
     };
   }
 
