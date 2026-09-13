@@ -23,16 +23,32 @@ export function validateTrade(request: TradeRequest, limits: RiskLimits): string
   return null;
 }
 
-export function evaluateRisk(request: TradeRequest, limits: RiskLimits, state: RiskState, context: TradeContext): RiskCheckResult {
+export function evaluateRisk(
+  request: TradeRequest,
+  limits: RiskLimits,
+  state: RiskState,
+  context: TradeContext,
+  cashToken: `0x${string}`
+): RiskCheckResult {
   const basic = validateTrade(request, limits);
   if (basic) return { ok: false, reason: basic };
   if (state.killSwitch) return { ok: false, reason: "Kill switch is active." };
   if (state.dailyLossWei >= limits.maxDailyLossWei) return { ok: false, reason: "Daily loss limit reached." };
   if (state.dailyTrades >= limits.maxTradesPerDay) return { ok: false, reason: "Daily trade limit reached." };
-  if (context.currentExposureWei + request.amountInWei > limits.maxPortfolioExposureWei) return { ok: false, reason: "Portfolio exposure limit would be exceeded." };
-  if (context.tokenExposureWei + request.amountOutWei > limits.maxTokenExposureWei) return { ok: false, reason: "Token exposure limit would be exceeded." };
-  if (context.openPositions >= limits.maxOpenPositions && context.tokenExposureWei === 0n) return { ok: false, reason: "Maximum open positions reached." };
-  const token = request.tokenOut.toLowerCase();
+
+  const isBuy = request.tokenIn.toLowerCase() === cashToken.toLowerCase();
+  const projectedExposure = isBuy
+    ? context.currentExposureWei + request.amountInWei
+    : context.currentExposureWei;
+  const projectedTokenExposure = isBuy
+    ? context.tokenExposureWei + request.amountInWei
+    : context.tokenExposureWei;
+
+  if (projectedExposure > limits.maxPortfolioExposureWei) return { ok: false, reason: "Portfolio exposure limit would be exceeded." };
+  if (projectedTokenExposure > limits.maxTokenExposureWei) return { ok: false, reason: "Token exposure limit would be exceeded." };
+  if (isBuy && context.openPositions >= limits.maxOpenPositions && context.tokenExposureWei === 0n) return { ok: false, reason: "Maximum open positions reached." };
+
+  const token = (isBuy ? request.tokenOut : request.tokenIn).toLowerCase();
   const lastTradeAt = state.lastTradeAtByToken[token];
   if (lastTradeAt !== undefined) {
     const elapsed = ((context.nowMs ?? Date.now()) - lastTradeAt) / 1000;
