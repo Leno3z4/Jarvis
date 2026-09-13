@@ -89,7 +89,7 @@ export function getConfig(env: Env): JarvisConfig {
     liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
     gemini: {
       primaryKey: env.GEMINI_API_KEY ?? "", fallback1Key: env.GEMINI_API_KEY_FALLBACK_1 ?? "", fallback2Key: env.GEMINI_API_KEY_FALLBACK_2 ?? "",
-      primaryModel: env.GEMINI_MODEL ?? "gemini-2.5-flash", fallback1Model: env.GEMINI_MODEL_FALLBACK_1 ?? "gemini-2.5-flash", fallback2Model: env.GEMINI_MODEL_FALLBACK_2 ?? "gemini-3.1-flash-lite"
+      primaryModel: env.GEMINI_MODEL ?? "gemini-3.6-flash", fallback1Model: env.GEMINI_MODEL_FALLBACK_1 ?? "gemini-3.6-flash", fallback2Model: env.GEMINI_MODEL_FALLBACK_2 ?? "gemini-3.5-flash-lite"
     },
     strategy: {
       minLiquidityUsd: numberEnv(env.STRATEGY_MIN_LIQUIDITY_USD, 50_000), minVolume24hUsd: numberEnv(env.STRATEGY_MIN_VOLUME_USD, 10_000),
