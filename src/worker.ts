@@ -147,7 +147,8 @@ async function runPaperCycle(
     ],
     strategy: {
       ...config.strategy,
-      cashToken: config.paperCashToken
+      cashToken: config.paperCashToken,
+      uniswapApiKey: (env as Env & { UNISWAP_API_KEY?: string }).UNISWAP_API_KEY
     },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.paperTakerAddress,
