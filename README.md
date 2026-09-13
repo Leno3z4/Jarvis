@@ -21,12 +21,15 @@ Paper mode persists balances and executed paper fills in the SQLite-backed Durab
 ## Pipeline
 
 ```text
-market scanner
+DexScreener Base discovery
     -> deterministic liquidity / volume / momentum filters
     -> Gemini structured decision
+    -> 0x execution quote
     -> deterministic risk validation
     -> paper or live executor
 ```
+
+The strategy scan runs from Cron every five minutes when its required credentials are configured and persists the latest opportunities in the Durable Object. It does not automatically submit a trade yet.
 
 Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transactions, choose transaction calldata, or bypass risk controls. The Gemini client automatically fails over across the configured primary, fallback 1, and fallback 2 candidates on quota/transient failures.
 
@@ -35,13 +38,15 @@ Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transa
 ```text
 GET  /health
 POST /ai/generate
+POST /strategy/scan
+GET  /strategy/latest
 POST /quote
 GET  /portfolio
 POST /paper/reset
 POST /trade
 ```
 
-`POST /quote` uses a server-side 0x API key and the configured wallet address to request a firm Base quote.
+`POST /strategy/scan` discovers Base tokens, scores them, asks Gemini for validated decisions, obtains an execution quote for eligible candidates, and stores the result.
 
 `POST /trade` expects integer amounts as strings because JSON does not support `bigint`:
 
