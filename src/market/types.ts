@@ -7,7 +7,7 @@ export interface TokenMarket {
   volume24hUsd: number;
   change24hPct: number;
   observedAt: number;
-  dataCompleteness?: "full" | "liquidity-price-only";
+  dataCompleteness?: "full" | "liquidity-price-only" | "quote-only";
 }
 
 export interface MarketProvider {
