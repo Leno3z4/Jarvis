@@ -1,4 +1,3 @@
-import { DexScreenerMarketProvider } from "../market/dexscreener";
 import { UniswapTokenProvider } from "../market/uniswap";
 import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
@@ -19,16 +18,12 @@ export async function runStrategyScan(config: {
     throw new Error("Uniswap API key is required for Base token discovery.");
   }
 
-  const limit = config.limit ?? 30;
+  const limit = Math.min(config.limit ?? 15, 15);
   const uniswap = new UniswapTokenProvider(uniswapApiKey);
-  const tokens = await uniswap.discoverBaseTokenAddresses(limit);
-  if (tokens.length === 0) return { opportunities: [], discovered: 0 };
+  const markets = await uniswap.discoverBaseMarkets(limit);
+  if (markets.length === 0) return { opportunities: [], discovered: 0 };
 
-  const dex = new DexScreenerMarketProvider();
-  const addresses = tokens.map((token) => token.address);
-  const markets = await dex.getTokens(addresses);
   const quoteProvider = new ZeroExQuoteProvider(config.zeroExApiKey, config.takerAddress);
-
   const opportunities = await evaluateMarkets(
     markets,
     config.gemini,
