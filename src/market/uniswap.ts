@@ -5,7 +5,7 @@ const POOL_API_URL = "https://liquidity.api.uniswap.org/lp/pool_info";
 const CHAIN_ID = 8453;
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
 const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
-const PROTOCOLS = ["V3", "V2", "V4"] as const;
+const PROTOCOLS = ["V3", "V2"] as const;
 const V3_FEES = [100, 500, 3000, 10_000] as const;
 
 type Protocol = (typeof PROTOCOLS)[number];
@@ -154,6 +154,10 @@ export class UniswapTokenProvider {
     const data = (await response.json()) as UniswapResponse;
     return (data.tokens ?? [])
       .filter((token) => Number(token.chainId) === CHAIN_ID && isAddress(token.address))
+      .filter((token) => {
+        const address = token.address!.toLowerCase();
+        return address !== BASE_USDC.toLowerCase() && address !== BASE_WETH.toLowerCase();
+      })
       .map((token) => ({
         address: token.address as `0x${string}`,
         symbol: token.symbol ?? token.name ?? "UNKNOWN",
