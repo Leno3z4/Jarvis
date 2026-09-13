@@ -15,3 +15,11 @@ BASE_RPC_URL=https://mainnet.base.org
 LIVE_WALLET_ADDRESS=
 LIVE_PRIVATE_KEY=
 LIVE_TRADING_ENABLED=false
+
+# Gemini. Keep these as Cloudflare secrets, never in source control.
+GEMINI_API_KEY=
+GEMINI_API_KEY_FALLBACK_1=
+GEMINI_API_KEY_FALLBACK_2=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL_FALLBACK_1=gemini-2.5-flash-lite
+GEMINI_MODEL_FALLBACK_2=gemini-2.5-flash
