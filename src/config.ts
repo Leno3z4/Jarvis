@@ -34,6 +34,7 @@ export interface Env {
   STRATEGY_QUOTE_AMOUNT_WEI?: string;
   STRATEGY_SLIPPAGE_BPS?: string;
   BOT_STATE: DurableObjectNamespace;
+  RISK_STATE: DurableObjectNamespace;
 }
 
 export interface JarvisConfig {
