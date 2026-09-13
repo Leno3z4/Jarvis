@@ -1,5 +1,5 @@
 import type { GeminiCandidate } from "../ai/gemini";
-import type { QuoteProvider, TokenMarket } from "../market/types";
+import type { TokenMarket, QuoteProvider } from "../market/types";
 import { scanMarkets, type StrategyConfig } from "./engine";
 import { analyzeCandidate, type StrategyDecision } from "./decision";
 
@@ -7,6 +7,7 @@ export interface StrategyLoopConfig extends StrategyConfig {
   maxCandidates: number;
   minGeminiConfidence: number;
   maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
+  cashToken: `0x${string}`;
 }
 
 export interface StrategyOpportunity {
@@ -51,10 +52,10 @@ export async function evaluateMarkets(
     let quotedIn: bigint | undefined;
     let quotedOut: bigint | undefined;
 
-    if (executable && quoteProvider && quoteAmountInWei) {
+    if (executable && quoteProvider && quoteAmountInWei && candidate.market.address.toLowerCase() !== config.cashToken.toLowerCase()) {
       const quote = await quoteProvider.getQuote({
-        tokenIn: candidate.market.address,
-        tokenOut: candidate.market.address,
+        tokenIn: decision.decision === "BUY" ? config.cashToken : candidate.market.address,
+        tokenOut: decision.decision === "BUY" ? candidate.market.address : config.cashToken,
         amountInWei: quoteAmountInWei,
         slippageBps
       }).catch(() => null);
@@ -66,6 +67,9 @@ export async function evaluateMarkets(
         quotedIn = quote.amountInWei;
         quotedOut = quote.amountOutWei;
       }
+    } else if (executable && (!quoteProvider || !quoteAmountInWei)) {
+      executable = false;
+      rejectionReason = "Execution quote is not configured.";
     }
 
     results.push({
