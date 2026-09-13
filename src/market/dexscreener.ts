@@ -74,36 +74,32 @@ export class DexScreenerMarketProvider implements MarketProvider {
     );
 
     if (pairs.length === 0) throw new Error(`No Base market found for ${address}.`);
+    return toMarket(pairs.sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd))[0]);
+  }
 
-    const pair = pairs.sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd))[0];
-    const change24h = num(pair.priceChange?.h24);
+  async getTokens(addresses: `0x${string}`[]): Promise<TokenMarket[]> {
+    const unique = [...new Set(addresses.map((address) => address.toLowerCase()))]
+      .filter((address) => isAddress(address))
+      .slice(0, 30);
+    if (unique.length === 0) return [];
 
-    return {
-      address,
-      symbol: pair.baseToken?.symbol ?? "UNKNOWN",
-      decimals: 18,
-      priceUsd: Number(pair.priceUsd ?? 0),
-      liquidityUsd: num(pair.liquidity?.usd),
-      volume24hUsd: num(pair.volume?.h24),
-      change24hPct: change24h,
-      observedAt: Date.now()
-    };
+    const response = await fetch(
+      `${API_BASE}/latest/dex/tokens/${unique.join(",")}`,
+      { headers: { accept: "application/json" } }
+    );
+
+    if (!response.ok) {
+      throw new Error(`DexScreener token enrichment failed (${response.status}).`);
+    }
+
+    const data = (await response.json()) as { pairs?: Pair[] };
+    return bestBasePairs(data.pairs ?? [], unique.length);
   }
 
   private async discoverFromSearch(limit: number): Promise<TokenMarket[]> {
     const queries = [
-      "BRETT",
-      "TOSHI",
-      "DEGEN",
-      "VIRTUAL",
-      "AERO",
-      "HIGHER",
-      "KEYCAT",
-      "MIGGLES",
-      "DOGINME",
-      "MORPHO",
-      "MOG",
-      "BASE"
+      "BRETT", "TOSHI", "DEGEN", "VIRTUAL", "AERO", "HIGHER",
+      "KEYCAT", "MIGGLES", "DOGINME", "MORPHO", "MOG", "BASE"
     ];
     const pairs: Pair[] = [];
 
@@ -137,18 +133,7 @@ export class DexScreenerMarketProvider implements MarketProvider {
         .slice(0, Math.min(limit, 30));
 
       if (addresses.length === 0) return [];
-
-      const response = await fetch(
-        `${API_BASE}/latest/dex/tokens/${addresses.join(",")}`,
-        { headers: { accept: "application/json" } }
-      );
-
-      if (!response.ok) {
-        throw new Error(`DexScreener batch lookup failed (${response.status}).`);
-      }
-
-      const data = (await response.json()) as { pairs?: Pair[] };
-      return bestBasePairs(data.pairs ?? [], limit);
+      return this.getTokens(addresses);
     }
 
     if (profilesResponse.status === 429) {
