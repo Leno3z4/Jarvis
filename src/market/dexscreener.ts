@@ -91,17 +91,34 @@ export class DexScreenerMarketProvider implements MarketProvider {
   }
 
   private async discoverFromSearch(limit: number): Promise<TokenMarket[]> {
-    const queries = ["WETH", "USDC"];
+    const queries = [
+      "BRETT",
+      "TOSHI",
+      "DEGEN",
+      "VIRTUAL",
+      "AERO",
+      "HIGHER",
+      "KEYCAT",
+      "MIGGLES",
+      "DOGINME",
+      "MORPHO",
+      "MOG",
+      "BASE"
+    ];
     const pairs: Pair[] = [];
 
     for (const query of queries) {
-      const response = await fetch(
-        `${API_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`,
-        { headers: { accept: "application/json" } }
-      );
-      if (!response.ok) continue;
-      const data = (await response.json()) as { pairs?: Pair[] };
-      pairs.push(...(data.pairs ?? []));
+      try {
+        const response = await fetch(
+          `${API_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`,
+          { headers: { accept: "application/json" } }
+        );
+        if (!response.ok) continue;
+        const data = (await response.json()) as { pairs?: Pair[] };
+        pairs.push(...(data.pairs ?? []));
+      } catch {
+        // Keep discovery resilient if an individual search request fails.
+      }
     }
 
     return bestBasePairs(pairs, limit);
