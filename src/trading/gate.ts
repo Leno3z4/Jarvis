@@ -5,7 +5,6 @@ export interface ExecutionGateInput {
   decision: StrategyDecision;
   amountInWei: bigint;
   currentExposureWei: bigint;
-  liveTradingEnabled: boolean;
 }
 
 export function evaluateExecutionGate(
@@ -29,9 +28,6 @@ export function evaluateExecutionGate(
   }
   if (input.currentExposureWei + input.amountInWei > limits.maxPortfolioExposureWei) {
     return "Portfolio exposure limit would be exceeded.";
-  }
-  if (input.liveTradingEnabled && !input.liveTradingEnabled) {
-    return "Live trading is disabled.";
   }
   return null;
 }
