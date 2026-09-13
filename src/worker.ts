@@ -113,15 +113,17 @@ async function runPaperCycle(
   env: Env,
   config: ReturnType<typeof getConfig>
 ) {
-  if (
-    config.mode !== "paper" ||
-    !config.zeroExApiKey ||
-    !config.paperTakerAddress ||
-    !config.gemini.primaryKey
-  ) {
+  const missing: string[] = [];
+  if (config.mode !== "paper") missing.push("TRADING_MODE=paper");
+  if (!config.zeroExApiKey) missing.push("ZEROEX_API_KEY");
+  if (!config.paperTakerAddress) missing.push("PAPER_TAKER_ADDRESS");
+  if (!config.gemini.primaryKey) missing.push("GEMINI_API_KEY");
+
+  if (missing.length > 0) {
     return {
       executed: false,
-      reason: "Paper automation is not fully configured."
+      reason: "Paper automation is not fully configured.",
+      missing
     };
   }
 
@@ -203,6 +205,26 @@ export default {
 
     const url = new URL(request.url);
     const config = getConfig(env);
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      return json({
+        ok: true,
+        mode: config.mode,
+        liveTradingEnabled: config.liveTradingEnabled,
+        geminiFallbacksConfigured: [
+          Boolean(config.gemini.primaryKey),
+          Boolean(config.gemini.fallback1Key),
+          Boolean(config.gemini.fallback2Key)
+        ].filter(Boolean).length,
+        configuration: {
+          geminiPrimaryConfigured: Boolean(config.gemini.primaryKey),
+          geminiFallback1Configured: Boolean(config.gemini.fallback1Key),
+          geminiFallback2Configured: Boolean(config.gemini.fallback2Key),
+          zeroExConfigured: Boolean(config.zeroExApiKey),
+          paperTakerConfigured: Boolean(config.paperTakerAddress)
+        }
+      });
+    }
 
     if (
       url.pathname === "/risk/state" &&
