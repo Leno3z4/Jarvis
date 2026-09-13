@@ -52,6 +52,8 @@ async function poolInfo(
   protocol: Protocol,
   fee?: number
 ): Promise<PoolInfo[]> {
+  if (token.toLowerCase() === quoteToken.toLowerCase()) return [];
+
   const poolParameters: Record<string, unknown> = {
     tokenAddressA: token,
     tokenAddressB: quoteToken
