@@ -1,5 +1,6 @@
 import legacy from "./index";
 import { TradingBotState } from "./state/bot-state";
+import { RiskState } from "./state/risk-state";
 import { getConfig, type Env } from "./config";
 import { evaluateAutomation } from "./strategy/automation";
 import { validateTrade } from "./trading/risk";
@@ -194,7 +195,7 @@ async function runPaperCycle(
   return { executed: response.ok, trade: result.trade };
 }
 
-export { TradingBotState };
+export { TradingBotState, RiskState };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
