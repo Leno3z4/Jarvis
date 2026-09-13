@@ -27,7 +27,16 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const reasons: string[] = [];
   let score = 0;
 
-  if (market.dataCompleteness === "liquidity-price-only") {
+  if (market.dataCompleteness === "quote-only") {
+    // Quote-only discovery proves there is a live Uniswap route and gives us
+    // a current executable price, but it does not provide trustworthy liquidity,
+    // volume, or momentum numbers. Do not fabricate those metrics.
+    score += 40;
+    reasons.push("live Uniswap quote available");
+    reasons.push("liquidity unavailable from current provider");
+    reasons.push("volume unavailable from current provider");
+    reasons.push("momentum unavailable from current provider");
+  } else if (market.dataCompleteness === "liquidity-price-only") {
     if (market.liquidityUsd >= config.minLiquidityUsd) {
       score += 30;
       reasons.push("healthy liquidity");
