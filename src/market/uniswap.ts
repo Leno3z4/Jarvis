@@ -7,10 +7,9 @@ const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
 const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
 const NATIVE_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-const PROTOCOLS = ["V3", "V2"] as const;
-const V3_FEES = [100, 500, 3000, 10_000] as const;
+const V3_FEES = [500, 3000] as const;
 
-type Protocol = (typeof PROTOCOLS)[number];
+type Protocol = "V3";
 
 interface UniswapToken {
   name?: string;
@@ -56,22 +55,12 @@ async function poolInfo(
   apiKey: string,
   token: `0x${string}`,
   quoteToken: `0x${string}`,
-  protocol: Protocol,
-  fee?: number
+  fee: number
 ): Promise<PoolInfo[]> {
   if (token.toLowerCase() === quoteToken.toLowerCase()) return [];
 
   const [tokenAddressA, tokenAddressB] = [token, quoteToken]
     .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-
-  const poolParameters: Record<string, unknown> = {
-    tokenAddressA,
-    tokenAddressB
-  };
-
-  if (protocol === "V3") {
-    poolParameters.fee = fee;
-  }
 
   const response = await fetch(POOL_API_URL, {
     method: "POST",
@@ -81,17 +70,21 @@ async function poolInfo(
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      protocol,
+      protocol: "V3",
       chainId: CHAIN_ID,
-      poolParameters,
-      pageSize: 20,
+      poolParameters: {
+        tokenAddressA,
+        tokenAddressB,
+        fee
+      },
+      pageSize: 10,
       currentPage: 1
     })
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Uniswap ${protocol} pool lookup failed (${response.status}): ${body.slice(0, 200)}`);
+    throw new Error(`Uniswap V3 pool lookup failed (${response.status}): ${body.slice(0, 200)}`);
   }
 
   const data = (await response.json()) as PoolResponse;
@@ -168,6 +161,7 @@ export class UniswapTokenProvider {
         const address = token.address!.toLowerCase();
         return isErc20Address(token.address!) && address !== BASE_USDC.toLowerCase() && address !== BASE_WETH.toLowerCase();
       })
+      .slice(0, 5)
       .map((token) => ({
         address: token.address as `0x${string}`,
         symbol: token.symbol ?? token.name ?? "UNKNOWN",
@@ -180,58 +174,60 @@ export class UniswapTokenProvider {
       }));
   }
 
-  async discoverBaseMarkets(limit = 15): Promise<TokenMarket[]> {
-    const tokens = (await this.discoverBaseTokenAddresses(Math.min(limit, 20))).slice(0, Math.min(limit, 20));
+  async discoverBaseMarkets(limit = 5): Promise<TokenMarket[]> {
+    const tokens = (await this.discoverBaseTokenAddresses(Math.min(limit, 5))).slice(0, 5);
     const markets: TokenMarket[] = [];
     const failures: string[] = [];
 
-    for (let index = 0; index < tokens.length; index += 2) {
-      const batch = tokens.slice(index, index + 2);
-      const results = await Promise.all(batch.map(async (token) => {
-        const candidates: TokenMarket[] = [];
+    // Keep the Worker well under its default subrequest ceiling.
+    // First try USDC on the two most common Base V3 fee tiers.
+    for (const token of tokens) {
+      for (const fee of V3_FEES) {
+        try {
+          const pools = await poolInfo(this.apiKey, token.address, BASE_USDC, fee);
+          const market = pools
+            .map((pool) => marketFromPool(token, pool, BASE_USDC))
+            .filter((entry): entry is TokenMarket => entry !== null)
+            .filter((entry) => entry.liquidityUsd > 0 && entry.priceUsd > 0)
+            .sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0];
+          if (market) markets.push(market);
+        } catch (error) {
+          failures.push(`${token.symbol}:USDC:V3:${fee}:${error instanceof Error ? error.message : "unknown"}`);
+        }
+      }
+    }
 
-        for (const protocol of PROTOCOLS) {
-          for (const quote of [BASE_USDC, BASE_WETH] as const) {
-            try {
-              if (protocol === "V3") {
-                for (const fee of V3_FEES) {
-                  try {
-                    const pools = await poolInfo(this.apiKey, token.address, quote, protocol, fee);
-                    candidates.push(
-                      ...pools
-                        .map((pool) => marketFromPool(token, pool, quote))
-                        .filter((market): market is TokenMarket => market !== null)
-                    );
-                  } catch (error) {
-                    failures.push(`${token.symbol}:V3:${fee}:${quote.slice(0, 8)}:${error instanceof Error ? error.message : "unknown"}`);
-                  }
-                }
-              } else {
-                const pools = await poolInfo(this.apiKey, token.address, quote, protocol);
-                candidates.push(
-                  ...pools
-                    .map((pool) => marketFromPool(token, pool, quote))
-                    .filter((market): market is TokenMarket => market !== null)
-                );
-              }
-            } catch (error) {
-              failures.push(`${token.symbol}:${protocol}:${quote.slice(0, 8)}:${error instanceof Error ? error.message : "unknown"}`);
-            }
+    // Only use WETH as a fallback, avoiding a second full scan when USDC works.
+    if (markets.length === 0) {
+      for (const token of tokens) {
+        for (const fee of V3_FEES) {
+          try {
+            const pools = await poolInfo(this.apiKey, token.address, BASE_WETH, fee);
+            const market = pools
+              .map((pool) => marketFromPool(token, pool, BASE_WETH))
+              .filter((entry): entry is TokenMarket => entry !== null)
+              .filter((entry) => entry.liquidityUsd > 0)
+              .sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0];
+            if (market) markets.push(market);
+          } catch (error) {
+            failures.push(`${token.symbol}:WETH:V3:${fee}:${error instanceof Error ? error.message : "unknown"}`);
           }
         }
-
-        return candidates
-          .filter((market) => market.liquidityUsd > 0 && market.priceUsd > 0)
-          .sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0] ?? null;
-      }));
-
-      markets.push(...results.filter((market): market is TokenMarket => market !== null));
+      }
     }
 
-    if (markets.length === 0 && failures.length > 0) {
+    const bestByToken = new Map<string, TokenMarket>();
+    for (const market of markets) {
+      const current = bestByToken.get(market.address.toLowerCase());
+      if (!current || market.liquidityUsd > current.liquidityUsd) {
+        bestByToken.set(market.address.toLowerCase(), market);
+      }
+    }
+
+    const result = [...bestByToken.values()];
+    if (result.length === 0 && failures.length > 0) {
       throw new Error(`No Base Uniswap markets discovered. Sample pool errors: ${failures.slice(0, 3).join(" | ")}`);
     }
-
-    return markets;
+    return result;
   }
 }
