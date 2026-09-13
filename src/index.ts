@@ -24,6 +24,18 @@ interface QuotePayload {
   slippageBps: number;
 }
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "content-type,authorization"
+};
+
+function corsJson(body: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) headers.set(key, value);
+  return Response.json(body, { ...init, headers });
+}
+
 function parseTradePayload(value: TradePayload): TradeRequest {
   return {
     tokenIn: value.tokenIn,
@@ -35,7 +47,7 @@ function parseTradePayload(value: TradePayload): TradeRequest {
   };
 }
 
-function serializeTrade(request: TradeRequest): TradePayload {
+function serializeTrade(request: TradeRequest) {
   return {
     tokenIn: request.tokenIn,
     tokenOut: request.tokenOut,
@@ -115,10 +127,7 @@ async function runAndPersistStrategy(env: Env, config: ReturnType<typeof getConf
       { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
       { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
     ],
-    strategy: {
-      ...config.strategy,
-      cashToken: config.paperCashToken
-    },
+    strategy: { ...config.strategy, cashToken: config.paperCashToken },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress,
     limit: 30
@@ -194,6 +203,7 @@ export class TradingBotState {
         amount_out TEXT NOT NULL,
         slippage_bps INTEGER NOT NULL,
         reason TEXT NOT NULL,
+        realized_pnl_wei TEXT NOT NULL DEFAULT '0',
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS strategy_runs (
@@ -202,20 +212,19 @@ export class TradingBotState {
         created_at TEXT NOT NULL
       );
     `);
+
+    try {
+      this.sql.exec("ALTER TABLE trades ADD COLUMN realized_pnl_wei TEXT NOT NULL DEFAULT '0'");
+    } catch {
+      // Column already exists on upgraded Durable Objects.
+    }
   }
 
   private ensurePaperAccount(cashToken: `0x${string}`, startingCashWei: bigint): void {
-    const existing = this.sql
-      .exec<{ value: string }>("SELECT value FROM meta WHERE key = 'cash_token'")
-      .one();
-
+    const existing = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'cash_token'").one();
     if (!existing) {
       this.sql.exec("INSERT INTO meta(key, value) VALUES ('cash_token', ?)", cashToken.toLowerCase());
-      this.sql.exec(
-        "INSERT INTO balances(token, amount) VALUES (?, ?)",
-        cashToken.toLowerCase(),
-        startingCashWei.toString()
-      );
+      this.sql.exec("INSERT INTO balances(token, amount) VALUES (?, ?)", cashToken.toLowerCase(), startingCashWei.toString());
       this.sql.exec("INSERT INTO meta(key, value) VALUES ('realized_pnl_wei', '0')");
     }
   }
@@ -241,28 +250,61 @@ export class TradingBotState {
     const cashToken = (url.searchParams.get("cashToken") ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
     const startingCashWei = BigInt(url.searchParams.get("startingCashWei") ?? "0");
 
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "jarvis-bot-state" });
+    if (url.pathname === "/health") return corsJson({ ok: true, service: "jarvis-bot-state" });
 
     if (url.pathname === "/portfolio" && request.method === "GET") {
-      return Response.json(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
+      return corsJson(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
+    }
+
+    if (url.pathname === "/trades" && request.method === "GET") {
+      const requested = Number(url.searchParams.get("limit") ?? "100");
+      const limit = Math.min(Math.max(Number.isFinite(requested) ? Math.floor(requested) : 100, 1), 500);
+      const trades = this.sql.exec<{
+        id: number;
+        token_in: string;
+        token_out: string;
+        amount_in: string;
+        amount_out: string;
+        slippage_bps: number;
+        reason: string;
+        realized_pnl_wei: string;
+        created_at: string;
+      }>(
+        "SELECT id, token_in, token_out, amount_in, amount_out, slippage_bps, reason, realized_pnl_wei, created_at FROM trades ORDER BY id DESC LIMIT ?",
+        limit
+      ).toArray();
+
+      return corsJson({
+        trades: trades.reverse().map((trade) => ({
+          id: trade.id,
+          tokenIn: trade.token_in,
+          tokenOut: trade.token_out,
+          amountInWei: trade.amount_in,
+          amountOutWei: trade.amount_out,
+          slippageBps: trade.slippage_bps,
+          reason: trade.reason,
+          realizedPnlWei: trade.realized_pnl_wei,
+          createdAt: trade.created_at
+        }))
+      });
     }
 
     if (url.pathname === "/strategy/store" && request.method === "POST") {
       const payload = await request.text();
       this.sql.exec("INSERT INTO strategy_runs(payload, created_at) VALUES (?, ?)", payload, new Date().toISOString());
-      return Response.json({ ok: true });
+      return corsJson({ ok: true });
     }
 
     if (url.pathname === "/strategy/latest" && request.method === "GET") {
       const latest = this.sql.exec<{ payload: string; created_at: string }>("SELECT payload, created_at FROM strategy_runs ORDER BY id DESC LIMIT 1").one();
-      return Response.json(latest ? { ...JSON.parse(latest.payload), createdAt: latest.created_at } : { discovered: 0, opportunities: [] });
+      return corsJson(latest ? { ...JSON.parse(latest.payload), createdAt: latest.created_at } : { discovered: 0, opportunities: [] });
     }
 
     if (url.pathname === "/paper/reset" && request.method === "POST") {
       this.sql.exec("DELETE FROM trades");
       this.sql.exec("DELETE FROM balances");
       this.sql.exec("DELETE FROM meta");
-      return Response.json(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
+      return corsJson(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
     }
 
     if (url.pathname === "/paper/trade" && request.method === "POST") {
@@ -288,30 +330,33 @@ export class TradingBotState {
       }
       this.sql.exec("INSERT OR REPLACE INTO meta(key, value) VALUES ('realized_pnl_wei', ?)", next.realizedPnlWei.toString());
       this.sql.exec(
-        "INSERT INTO trades(token_in, token_out, amount_in, amount_out, slippage_bps, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO trades(token_in, token_out, amount_in, amount_out, slippage_bps, reason, realized_pnl_wei, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         trade.tokenIn.toLowerCase(),
         trade.tokenOut.toLowerCase(),
         trade.amountInWei.toString(),
         trade.amountOutWei.toString(),
         trade.slippageBps,
         trade.reason,
+        next.realizedPnlWei.toString(),
         new Date().toISOString()
       );
 
-      return Response.json({ ok: true, result: serializeTradeResult(trade) });
+      return corsJson({ ok: true, result: serializeTradeResult(trade) });
     }
 
-    return Response.json({ ok: false, error: "Not found" }, { status: 404 });
+    return corsJson({ ok: false, error: "Not found" }, { status: 404 });
   }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === "OPTIONS") return corsJson({ ok: true });
+
     const url = new URL(request.url);
     const config = getConfig(env);
 
     if (url.pathname === "/health") {
-      return Response.json({
+      return corsJson({
         ok: true,
         mode: config.mode,
         liveTradingEnabled: config.liveTradingEnabled,
@@ -330,10 +375,10 @@ export default {
           ],
           body
         );
-        return Response.json({ ok: true, ...result });
+        return corsJson({ ok: true, ...result });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Gemini request failed.";
-        return Response.json({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: message }, { status: 503 });
       }
     }
 
@@ -342,17 +387,17 @@ export default {
         return await runAndPersistStrategy(env, config);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Strategy scan failed.";
-        return Response.json({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: message }, { status: 503 });
       }
     }
 
     if (url.pathname === "/strategy/run" && request.method === "POST") {
       try {
         const result = await runAutonomousPaperCycle(env, config);
-        return Response.json({ ok: true, ...result });
+        return corsJson({ ok: true, ...result });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Autonomous strategy run failed.";
-        return Response.json({ ok: false, error: message }, { status: 503 });
+        return corsJson({ ok: false, error: message }, { status: 503 });
       }
     }
 
@@ -363,7 +408,7 @@ export default {
     if (url.pathname === "/quote" && request.method === "POST") {
       try {
         if (!config.zeroExApiKey || !config.liveWalletAddress) {
-          return Response.json({ ok: false, error: "Quote provider is not configured." }, { status: 503 });
+          return corsJson({ ok: false, error: "Quote provider is not configured." }, { status: 503 });
         }
         const payload = (await request.json()) as QuotePayload;
         const provider = new ZeroExQuoteProvider(config.zeroExApiKey, config.liveWalletAddress);
@@ -373,10 +418,10 @@ export default {
           amountInWei: BigInt(payload.amountInWei),
           slippageBps: payload.slippageBps
         });
-        return Response.json({ ok: true, quote: serializeQuote(quote) });
+        return corsJson({ ok: true, quote: serializeQuote(quote) });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Quote request failed.";
-        return Response.json({ ok: false, error: message }, { status: 502 });
+        return corsJson({ ok: false, error: message }, { status: 502 });
       }
     }
 
@@ -384,8 +429,12 @@ export default {
       return getStateStub(env).fetch(`https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`);
     }
 
+    if (url.pathname === "/trades" && request.method === "GET") {
+      return getStateStub(env).fetch(`https://jarvis.internal/trades?limit=${encodeURIComponent(url.searchParams.get("limit") ?? "100")}`);
+    }
+
     if (url.pathname === "/paper/reset" && request.method === "POST") {
-      if (config.mode !== "paper") return Response.json({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
+      if (config.mode !== "paper") return corsJson({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
       return getStateStub(env).fetch(new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" }));
     }
 
@@ -393,7 +442,7 @@ export default {
       try {
         const trade = parseTradePayload((await request.json()) as TradePayload);
         const riskError = validateTrade(trade, config.risk);
-        if (riskError) return Response.json({ ok: false, error: riskError }, { status: 400 });
+        if (riskError) return corsJson({ ok: false, error: riskError }, { status: 400 });
 
         if (config.mode === "paper") {
           return getStateStub(env).fetch(new Request(
@@ -414,16 +463,16 @@ export default {
           enabled: config.liveTradingEnabled
         };
         const result = await createExecutor("live", liveConfig).execute(trade);
-        return Response.json({ ok: result.status !== "rejected", result });
+        return corsJson({ ok: result.status !== "rejected", result });
       } catch {
-        return Response.json({ ok: false, error: "Invalid trade payload." }, { status: 400 });
+        return corsJson({ ok: false, error: "Invalid trade payload." }, { status: 400 });
       }
     }
 
-    return Response.json({
+    return corsJson({
       service: "Jarvis",
       mode: config.mode,
-      endpoints: ["/health", "POST /ai/generate", "POST /strategy/scan", "POST /strategy/run", "GET /strategy/latest", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
+      endpoints: ["/health", "POST /ai/generate", "POST /strategy/scan", "POST /strategy/run", "GET /strategy/latest", "POST /quote", "/portfolio", "/trades", "POST /paper/reset", "POST /trade"]
     });
   },
 
