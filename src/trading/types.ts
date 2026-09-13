@@ -23,6 +23,7 @@ export interface TradeResult {
 export interface Portfolio {
   cashWei: bigint;
   positions: Record<string, bigint>;
+  costBasisWei: Record<string, bigint>;
   realizedPnlWei: bigint;
 }
 
