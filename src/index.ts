@@ -1,5 +1,6 @@
 import { getConfig, type Env } from "./config";
 import { generateWithFallbacks, type GeminiRequest } from "./ai/gemini";
+import { runStrategyScan } from "./strategy/runtime";
 import { ZeroExQuoteProvider } from "./market/zeroex";
 import { createExecutor } from "./trading/executor";
 import { applyPaperFill } from "./trading/portfolio";
@@ -88,6 +89,49 @@ function serializeQuote(quote: Awaited<ReturnType<ZeroExQuoteProvider["getQuote"
   };
 }
 
+function serializeStrategyResult(result: Awaited<ReturnType<typeof runStrategyScan>>) {
+  return {
+    discovered: result.discovered,
+    opportunities: result.opportunities.map((opportunity) => ({
+      market: opportunity.market,
+      scannerScore: opportunity.scannerScore,
+      scannerReasons: opportunity.scannerReasons,
+      decision: opportunity.decision,
+      quoteAmountInWei: opportunity.quoteAmountInWei?.toString(),
+      quoteAmountOutWei: opportunity.quoteAmountOutWei?.toString(),
+      provider: opportunity.provider,
+      executable: opportunity.executable,
+      rejectionReason: opportunity.rejectionReason
+    }))
+  };
+}
+
+async function runAndPersistStrategy(env: Env, config: ReturnType<typeof getConfig>) {
+  const takerAddress = config.mode === "paper" ? config.paperTakerAddress : config.liveWalletAddress;
+  const result = await runStrategyScan({
+    gemini: [
+      { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
+      { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
+      { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
+    ],
+    strategy: {
+      ...config.strategy,
+      cashToken: config.paperCashToken
+    },
+    zeroExApiKey: config.zeroExApiKey,
+    takerAddress,
+    limit: 30
+  });
+
+  return getStateStub(env).fetch(
+    new Request("https://jarvis.internal/strategy/store", {
+      method: "POST",
+      body: JSON.stringify(serializeStrategyResult(result)),
+      headers: { "content-type": "application/json" }
+    })
+  );
+}
+
 export class TradingBotState {
   private readonly sql: SqlStorage;
 
@@ -110,6 +154,11 @@ export class TradingBotState {
         amount_out TEXT NOT NULL,
         slippage_bps INTEGER NOT NULL,
         reason TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS strategy_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payload TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
     `);
@@ -169,6 +218,25 @@ export class TradingBotState {
 
     if (url.pathname === "/portfolio" && request.method === "GET") {
       return Response.json(serializePortfolio(this.portfolio(cashToken, startingCashWei)));
+    }
+
+    if (url.pathname === "/strategy/store" && request.method === "POST") {
+      const payload = await request.text();
+      this.sql.exec(
+        "INSERT INTO strategy_runs(payload, created_at) VALUES (?, ?)",
+        payload,
+        new Date().toISOString()
+      );
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/strategy/latest" && request.method === "GET") {
+      const latest = this.sql
+        .exec<{ payload: string; created_at: string }>(
+          "SELECT payload, created_at FROM strategy_runs ORDER BY id DESC LIMIT 1"
+        )
+        .one();
+      return Response.json(latest ? { ...JSON.parse(latest.payload), createdAt: latest.created_at } : { discovered: 0, opportunities: [] });
     }
 
     if (url.pathname === "/paper/reset" && request.method === "POST") {
@@ -266,6 +334,20 @@ export default {
       }
     }
 
+    if (url.pathname === "/strategy/scan" && request.method === "POST") {
+      try {
+        const response = await runAndPersistStrategy(env, config);
+        return response;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Strategy scan failed.";
+        return Response.json({ ok: false, error: message }, { status: 503 });
+      }
+    }
+
+    if (url.pathname === "/strategy/latest" && request.method === "GET") {
+      return getStateStub(env).fetch("https://jarvis.internal/strategy/latest");
+    }
+
     if (url.pathname === "/quote" && request.method === "POST") {
       try {
         if (!config.zeroExApiKey || !config.liveWalletAddress) {
@@ -351,11 +433,14 @@ export default {
     return Response.json({
       service: "Jarvis",
       mode: config.mode,
-      endpoints: ["/health", "POST /ai/generate", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
+      endpoints: ["/health", "POST /ai/generate", "POST /strategy/scan", "GET /strategy/latest", "POST /quote", "/portfolio", "POST /paper/reset", "POST /trade"]
     });
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    await getStateStub(env).fetch("https://jarvis.internal/health");
+    const config = getConfig(env);
+    if (config.gemini.primaryKey && config.zeroExApiKey && (config.liveWalletAddress || config.paperTakerAddress)) {
+      await runAndPersistStrategy(env, config);
+    }
   }
 };
