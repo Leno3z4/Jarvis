@@ -6,6 +6,7 @@ const CHAIN_ID = 8453;
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
 const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
 const PROTOCOLS = ["V3", "V2", "V4"] as const;
+const V3_FEES = [100, 500, 3000, 10_000] as const;
 
 type Protocol = (typeof PROTOCOLS)[number];
 
@@ -17,9 +18,7 @@ interface UniswapToken {
   decimals?: string | number;
 }
 
-interface UniswapResponse {
-  tokens?: UniswapToken[];
-}
+interface UniswapResponse { tokens?: UniswapToken[]; }
 
 interface PoolInfo {
   tokenAddressA?: string;
@@ -30,11 +29,10 @@ interface PoolInfo {
   tokenDecimalsB?: number | string;
   poolLiquidity?: string;
   poolProtocol?: string;
+  fee?: string | number;
 }
 
-interface PoolResponse {
-  pools?: PoolInfo[];
-}
+interface PoolResponse { pools?: PoolInfo[]; }
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
@@ -51,8 +49,18 @@ async function poolInfo(
   apiKey: string,
   token: `0x${string}`,
   quoteToken: `0x${string}`,
-  protocol: Protocol
+  protocol: Protocol,
+  fee?: number
 ): Promise<PoolInfo[]> {
+  const poolParameters: Record<string, unknown> = {
+    tokenAddressA: token,
+    tokenAddressB: quoteToken
+  };
+
+  if (protocol === "V3") {
+    poolParameters.fee = fee;
+  }
+
   const response = await fetch(POOL_API_URL, {
     method: "POST",
     headers: {
@@ -63,10 +71,7 @@ async function poolInfo(
     body: JSON.stringify({
       protocol,
       chainId: CHAIN_ID,
-      poolParameters: {
-        tokenAddressA: token,
-        tokenAddressB: quoteToken
-      },
+      poolParameters,
       pageSize: 20,
       currentPage: 1
     })
@@ -164,20 +169,35 @@ export class UniswapTokenProvider {
     const markets: TokenMarket[] = [];
     const failures: string[] = [];
 
-    for (let index = 0; index < tokens.length; index += 3) {
-      const batch = tokens.slice(index, index + 3);
+    for (let index = 0; index < tokens.length; index += 2) {
+      const batch = tokens.slice(index, index + 2);
       const results = await Promise.all(batch.map(async (token) => {
         const candidates: TokenMarket[] = [];
 
         for (const protocol of PROTOCOLS) {
           for (const quote of [BASE_USDC, BASE_WETH] as const) {
             try {
-              const pools = await poolInfo(this.apiKey, token.address, quote, protocol);
-              candidates.push(
-                ...pools
-                  .map((pool) => marketFromPool(token, pool, quote))
-                  .filter((market): market is TokenMarket => market !== null)
-              );
+              if (protocol === "V3") {
+                for (const fee of V3_FEES) {
+                  try {
+                    const pools = await poolInfo(this.apiKey, token.address, quote, protocol, fee);
+                    candidates.push(
+                      ...pools
+                        .map((pool) => marketFromPool(token, pool, quote))
+                        .filter((market): market is TokenMarket => market !== null)
+                    );
+                  } catch (error) {
+                    failures.push(`${token.symbol}:V3:${fee}:${quote.slice(0, 8)}:${error instanceof Error ? error.message : "unknown"}`);
+                  }
+                }
+              } else {
+                const pools = await poolInfo(this.apiKey, token.address, quote, protocol);
+                candidates.push(
+                  ...pools
+                    .map((pool) => marketFromPool(token, pool, quote))
+                    .filter((market): market is TokenMarket => market !== null)
+                );
+              }
             } catch (error) {
               failures.push(`${token.symbol}:${protocol}:${quote.slice(0, 8)}:${error instanceof Error ? error.message : "unknown"}`);
             }
