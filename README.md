@@ -2,9 +2,25 @@
 
 Autonomous Base trading agent with interchangeable paper and live execution.
 
+## Architecture
+
+```text
+Base discovery
+  -> deterministic scanner
+  -> Gemini structured decision
+  -> executable 0x quote
+  -> deterministic risk gate
+  -> paper/live executor
+  -> Durable Object SQLite state
+
+                    └── dashboard/ -> Vercel
+```
+
+The backend remains Cloudflare-native. The `dashboard/` directory is a separate Next.js application that reads backend telemetry.
+
 ## Modes
 
-The same strategy, risk, quote, and execution pipeline is used for both modes. Switch with one environment variable:
+Switch the same strategy/execution pipeline with one environment variable:
 
 ```env
 TRADING_MODE=paper
@@ -16,22 +32,23 @@ or:
 TRADING_MODE=live
 ```
 
-Paper mode persists balances and executed paper fills in the SQLite-backed Durable Object. Live execution is implemented through 0x Swap API v2 + viem, but remains disabled unless `LIVE_TRADING_ENABLED=true` is explicitly set.
+Paper mode is the default. Live execution additionally requires `LIVE_TRADING_ENABLED=true`.
 
-## Pipeline
+## Risk controls
 
-```text
-DexScreener Base discovery
-    -> deterministic liquidity / volume / momentum filters
-    -> Gemini structured decision
-    -> 0x execution quote
-    -> deterministic risk validation
-    -> paper or live executor
+Risk limits are persistent configuration rather than in-memory Worker state:
+
+```env
+MAX_TRADE_WEI=100000000000000000
+MAX_EXPOSURE_WEI=500000000000000000
+MAX_TOKEN_EXPOSURE_WEI=200000000000000000
+MAX_OPEN_POSITIONS=5
+MAX_TRADES_PER_DAY=24
+TRADE_COOLDOWN_SECONDS=900
+MAX_DAILY_LOSS_WEI=100000000000000000
 ```
 
-The strategy scan runs from Cron every five minutes when its required credentials are configured and persists the latest opportunities in the Durable Object. Autonomous paper cycles can execute paper fills; live mode remains guarded separately.
-
-Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It does not sign transactions, choose transaction calldata, or bypass risk controls. The Gemini client automatically fails over across the configured primary, fallback 1, and fallback 2 candidates on quota/transient failures.
+The risk layer provides a kill switch, daily trade limits, per-token cooldowns, portfolio/token exposure checks, position-count checks, idempotency support, and daily-loss accounting. Paper accounting now carries token cost basis so realized PnL is derived from entries and exits rather than raw balance differences.
 
 ## API
 
@@ -44,45 +61,34 @@ GET  /strategy/latest
 POST /quote
 GET  /portfolio
 GET  /trades
+GET  /risk/state
+POST /risk/kill-switch
 POST /paper/reset
 POST /trade
 ```
 
-`GET /portfolio` and `GET /trades` are used by the Vercel dashboard to render current portfolio state and the realized-PnL history.
+`GET /portfolio` and `GET /trades` power the Vercel dashboard.
 
-`POST /trade` expects integer amounts as strings because JSON does not support `bigint`:
+## Gemini
 
-```json
-{
-  "tokenIn": "0x...",
-  "tokenOut": "0x...",
-  "amountInWei": "1000000",
-  "amountOutWei": "950000000000000",
-  "slippageBps": 100,
-  "reason": "strategy signal"
-}
-```
+Gemini only recommends `BUY`, `SELL`, `HOLD`, or `SKIP`. It never signs transactions, supplies calldata, or bypasses deterministic risk controls. The client fails over across the configured primary/fallback candidates on transient or quota failures.
 
 ## Dashboard / Vercel
 
-The frontend lives in `dashboard/` and is designed to deploy as a separate Vercel project using this repository.
+The frontend lives in `dashboard/` and is intended to be deployed as its own Vercel project using this repository.
 
-In Vercel, set **Root Directory** to `dashboard`. The dashboard uses Next.js 16 and has no chart dependency; the PnL chart is rendered as SVG.
-
-Set these Vercel environment variables:
+Set **Root Directory** to `dashboard` and configure:
 
 ```env
 NEXT_PUBLIC_JARVIS_API_URL=https://YOUR-JARVIS-WORKER.workers.dev
 NEXT_PUBLIC_CASH_DECIMALS=18
 ```
 
-Set `NEXT_PUBLIC_CASH_DECIMALS` to the decimals of the configured `PAPER_CASH_TOKEN` (for example, a 6-decimal stablecoin uses `6`).
+The dashboard provides live mode/status cards, current cash/positions, realized-PnL history, and trade history. The PnL chart is rendered without an additional charting dependency.
 
-The Worker API currently exposes read-only dashboard telemetry without authentication. Before making a live trading dashboard public, add dashboard authentication or an origin/token gate.
+The dashboard API is currently telemetry-oriented and publicly readable. Before exposing a live-control surface, add authentication and restrict mutation endpoints separately from read-only telemetry.
 
 ## Live safety
-
-Live mode requires all of the following:
 
 ```env
 TRADING_MODE=live
@@ -93,11 +99,11 @@ LIVE_WALLET_ADDRESS=0x...
 LIVE_PRIVATE_KEY=0x...
 ```
 
-The private key must be stored as a Cloudflare secret in deployment, never committed to Git. The executor verifies that the configured address matches the private key, checks the 0x quote for balance/validation issues, sets only the allowance target returned by 0x when needed, and then submits the swap transaction.
+Keep the private key as a Cloudflare secret. Never commit funded-wallet credentials.
 
 ## Development
 
-Bot:
+Backend:
 
 ```bash
 npm install
@@ -113,5 +119,3 @@ cd dashboard
 npm install
 npm run dev
 ```
-
-Never commit private keys or funded-wallet credentials. Paper mode is the default development mode.
