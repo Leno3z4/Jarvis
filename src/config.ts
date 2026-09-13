@@ -64,7 +64,7 @@ export function getConfig(env: Env): JarvisConfig {
       fallback2Key: env.GEMINI_API_KEY_FALLBACK_2 ?? "",
       primaryModel: env.GEMINI_MODEL ?? "gemini-2.5-flash",
       fallback1Model: env.GEMINI_MODEL_FALLBACK_1 ?? "gemini-2.5-flash-lite",
-      fallback2Model: env.GEMINI_MODEL_FALLBACK_2 ?? "gemini-2.5-flash"
+      fallback2Model: env.GEMINI_MODEL_FALLBACK_2 ?? "gemini-3.1-flash-lite"
     }
   };
 }
