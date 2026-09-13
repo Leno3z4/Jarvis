@@ -3,28 +3,13 @@ import { evaluateRisk, dayKeyUtc, type TradeContext } from "../trading/risk";
 
 interface RiskPayload {
   trade: {
-    tokenIn: `0x${string}`;
-    tokenOut: `0x${string}`;
-    amountInWei: string;
-    amountOutWei: string;
-    slippageBps: number;
-    reason: string;
-    idempotencyKey?: string;
+    tokenIn: `0x${string}`; tokenOut: `0x${string}`; amountInWei: string; amountOutWei: string;
+    slippageBps: number; reason: string; idempotencyKey?: string;
   };
-  context: {
-    currentExposureWei: string;
-    tokenExposureWei: string;
-    openPositions: number;
-    nowMs: number;
-  };
+  context: { currentExposureWei: string; tokenExposureWei: string; openPositions: number; nowMs: number };
   limits: {
-    maxTradeWei: string;
-    maxPortfolioExposureWei: string;
-    maxTokenExposureWei: string;
-    maxOpenPositions: number;
-    maxTradesPerDay: number;
-    cooldownSeconds: number;
-    maxDailyLossWei: string;
+    maxTradeWei: string; maxPortfolioExposureWei: string; maxTokenExposureWei: string;
+    maxOpenPositions: number; maxTradesPerDay: number; cooldownSeconds: number; maxDailyLossWei: string;
   };
 }
 
@@ -61,7 +46,8 @@ function parseLimits(value: RiskPayload["limits"]): RiskLimits {
   return {
     maxTradeWei: BigInt(value.maxTradeWei), maxPortfolioExposureWei: BigInt(value.maxPortfolioExposureWei),
     maxTokenExposureWei: BigInt(value.maxTokenExposureWei), maxOpenPositions: value.maxOpenPositions,
-    maxTradesPerDay: value.maxTradesPerDay, cooldownSeconds: value.cooldownSeconds, maxDailyLossWei: BigInt(value.maxDailyLossWei)
+    maxTradesPerDay: value.maxTradesPerDay, cooldownSeconds: value.cooldownSeconds,
+    maxDailyLossWei: BigInt(value.maxDailyLossWei)
   };
 }
 
@@ -69,6 +55,15 @@ function parseTrade(value: RiskPayload["trade"]): TradeRequest {
   return {
     tokenIn: value.tokenIn, tokenOut: value.tokenOut, amountInWei: BigInt(value.amountInWei), amountOutWei: BigInt(value.amountOutWei),
     slippageBps: value.slippageBps, reason: value.reason, idempotencyKey: value.idempotencyKey
+  };
+}
+
+function parseContext(value: RiskPayload["context"]): TradeContext {
+  return {
+    currentExposureWei: BigInt(value.currentExposureWei),
+    tokenExposureWei: BigInt(value.tokenExposureWei),
+    openPositions: value.openPositions,
+    nowMs: value.nowMs
   };
 }
 
@@ -81,8 +76,8 @@ export class RiskState {
       CREATE TABLE IF NOT EXISTS risk_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS risk_idempotency (key TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
     `);
-    const initial = normalizeDay(readState(this.sql, Date.now()), Date.now());
-    writeState(this.sql, initial);
+    const now = Date.now();
+    writeState(this.sql, normalizeDay(readState(this.sql, now), now));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -92,42 +87,30 @@ export class RiskState {
     writeState(this.sql, state);
 
     if (url.pathname === "/health") return Response.json({ ok: true, killSwitch: state.killSwitch });
-
     if (url.pathname === "/state" && request.method === "GET") {
-      return Response.json({
-        killSwitch: state.killSwitch,
-        dayKey: state.dayKey,
-        dailyLossWei: state.dailyLossWei.toString(),
-        dailyTrades: state.dailyTrades,
-        lastTradeAtByToken: state.lastTradeAtByToken
-      });
+      return Response.json({ killSwitch: state.killSwitch, dayKey: state.dayKey, dailyLossWei: state.dailyLossWei.toString(), dailyTrades: state.dailyTrades, lastTradeAtByToken: state.lastTradeAtByToken });
     }
-
     if (url.pathname === "/kill-switch" && request.method === "POST") {
       const body = await request.json() as { enabled: boolean };
       state = { ...state, killSwitch: Boolean(body.enabled) };
       writeState(this.sql, state);
       return Response.json({ ok: true, killSwitch: state.killSwitch });
     }
-
     if (url.pathname === "/authorize" && request.method === "POST") {
       const payload = await request.json() as RiskPayload;
       const trade = parseTrade(payload);
-      const check = evaluateRisk(trade, parseLimits(payload.limits), state, payload.context);
+      const check = evaluateRisk(trade, parseLimits(payload.limits), state, parseContext(payload.context));
       if (!check.ok) return Response.json({ ok: false, reason: check.reason }, { status: 409 });
-
       if (trade.idempotencyKey) {
         const existing = this.sql.exec("SELECT key FROM risk_idempotency WHERE key = ?", trade.idempotencyKey).one();
         if (existing) return Response.json({ ok: false, reason: "Duplicate idempotency key." }, { status: 409 });
         this.sql.exec("INSERT INTO risk_idempotency(key, created_at) VALUES (?, ?)", trade.idempotencyKey, nowMs);
       }
-
       const token = trade.tokenOut.toLowerCase();
       state = { ...state, dailyTrades: state.dailyTrades + 1, lastTradeAtByToken: { ...state.lastTradeAtByToken, [token]: nowMs } };
       writeState(this.sql, state);
       return Response.json({ ok: true, state: { dailyTrades: state.dailyTrades } });
     }
-
     return Response.json({ ok: false, error: "Not found" }, { status: 404 });
   }
 }
