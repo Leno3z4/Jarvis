@@ -1,7 +1,7 @@
-import { generateWithFallbacks, type GeminiCandidate } from "../ai/gemini";
 import { DexScreenerMarketProvider } from "../market/dexscreener";
 import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
+import type { GeminiCandidate } from "../ai/gemini";
 
 export async function runStrategyScan(config: {
   gemini: GeminiCandidate[];
