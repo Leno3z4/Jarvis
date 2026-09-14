@@ -8,6 +8,7 @@ import { LiveExecutor } from "./trading/executor";
 import { validateTrade } from "./trading/risk";
 import type { TradeRequest } from "./trading/types";
 
+export { TradingBotState, RiskState } from "./worker";
 export { LiveTradingState } from "./state/live-state";
 
 const NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as `0x${string}`;
