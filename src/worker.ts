@@ -150,8 +150,8 @@ async function runPaperCycle(
       ...config.strategy,
       cashToken: config.paperCashToken,
       uniswapApiKey: env.UNISWAP_API_KEY,
-      theGraphApiKey: config.theGraphApiKey,
-      theGraphUniswapV3SubgraphId: config.theGraphUniswapV3SubgraphId
+      theGraphApiKey: config.strategy.theGraphApiKey,
+      theGraphUniswapV3SubgraphId: config.strategy.theGraphUniswapV3SubgraphId
     },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.paperTakerAddress,
@@ -226,15 +226,16 @@ export default {
           geminiFallback2Configured: Boolean(config.gemini.fallback2Key),
           zeroExConfigured: Boolean(config.zeroExApiKey),
           paperTakerConfigured: Boolean(config.paperTakerAddress),
-          theGraphConfigured: Boolean(config.theGraphApiKey)
+          theGraphConfigured: Boolean(config.strategy.theGraphApiKey),
+          theGraphSecretSource: config.strategy.theGraphApiKeySource
         }
       });
     }
 
     if (url.pathname === "/diagnostics/graph" && request.method === "GET") {
       const provider = new TheGraphMarketDataProvider(
-        config.theGraphApiKey ?? "",
-        config.theGraphUniswapV3SubgraphId
+        config.strategy.theGraphApiKey ?? "",
+        config.strategy.theGraphUniswapV3SubgraphId
       );
       return json(await provider.diagnose());
     }
