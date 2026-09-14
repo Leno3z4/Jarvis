@@ -3,7 +3,7 @@ import type { TokenMarket } from "./types";
 const DEFAULT_SUBGRAPH_ID = "GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz";
 const DEFAULT_TEST_TOKEN = "0x4200000000000000000000000000000000000006";
 const GATEWAY_BASE = "https://gateway.thegraph.com/api";
-const MAX_ENRICH_MARKETS = 20;
+const MAX_ENRICH_MARKETS = 30;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const NON_TARGET_SYMBOLS = new Set([
   "ETH", "WETH", "STETH", "WSTETH", "RETH", "WEETH", "CBETH", "METH", "OETH",
@@ -25,10 +25,32 @@ function isNonTargetSymbol(symbol: string): boolean {
     || normalized.includes("BTC");
 }
 
+const MEME_NAME_TERMS = [
+  "pepe", "doge", "shib", "floki", "bonk", "brett", "mog", "wojak", "degen",
+  "turbo", "toshi", "bobo", "andy", "ponke", "neiro", "mfer", "meme", "inu",
+  "dog", "cat", "frog", "ape", "monkey", "penguin", "chad", "giga", "ladys",
+  "normie", "keycat", "npc", "higher", "keyboard", "hamster", "goat", "panda",
+  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown"
+];
+
+const NON_MEME_TERMS = [
+  "wrapped", "staked", "restaked", "liquid staking", "yield", "vault", "index",
+  "governance", "oracle", "exchange", "router", "bridge", "infrastructure", "synthetic",
+  "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
+  "compound", "lido", "rocket pool", "maker", "curve"
+];
+
+function isLikelyMemeToken(name = "", symbol = ""): boolean {
+  const text = `${name} ${symbol}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (NON_MEME_TERMS.some((term) => text.includes(term))) return false;
+  return MEME_NAME_TERMS.some((term) => text.includes(term));
+}
+
 interface GraphHourData { periodStartUnix?: number | string; volumeUSD?: string | number; priceUSD?: string | number; close?: string | number; }
 interface GraphToken {
   id?: string;
   symbol?: string;
+  name?: string;
   decimals?: string | number;
   totalValueLockedUSD?: string | number;
   derivedETH?: string | number;
@@ -126,7 +148,7 @@ export class TheGraphMarketDataProvider {
     }
   }
 
-  async discoverLowCapMarkets(minLiquidityUsd: number, maxLiquidityUsd: number, limit = 60): Promise<TokenMarket[]> {
+  async discoverLowCapMarkets(minLiquidityUsd: number, maxLiquidityUsd: number, limit = 100): Promise<TokenMarket[]> {
     if (!this.apiKey || minLiquidityUsd <= 0 || maxLiquidityUsd < minLiquidityUsd) return [];
     const first = Math.min(Math.max(Math.floor(limit), 1), 100);
     const query = `query LowCapTokens($first: Int!, $minLiquidity: BigDecimal!, $maxLiquidity: BigDecimal!) {
@@ -142,6 +164,7 @@ export class TheGraphMarketDataProvider {
       ) {
         id
         symbol
+        name
         decimals
         totalValueLockedUSD
         derivedETH
@@ -169,9 +192,11 @@ export class TheGraphMarketDataProvider {
         .filter((token): token is GraphToken & { id: string } =>
           typeof token.id === "string" && ADDRESS_RE.test(token.id) && !isNonTargetSymbol(token.symbol ?? "UNKNOWN")
         )
+        .filter((token) => isLikelyMemeToken(token.name, token.symbol))
         .map((token) => ({
           address: token.id as `0x${string}`,
           symbol: token.symbol ?? "UNKNOWN",
+          name: token.name ?? token.symbol ?? "UNKNOWN",
           decimals: Number(token.decimals ?? 18),
           priceUsd: 0,
           liquidityUsd: numeric(token.totalValueLockedUSD),
@@ -191,7 +216,7 @@ export class TheGraphMarketDataProvider {
     return Promise.all(limited.map(async (market) => {
       try {
         const query = `query TokenData($token: String!) {
-          token(id: $token) { id symbol decimals totalValueLockedUSD derivedETH volumeUSD }
+          token(id: $token) { id symbol name decimals totalValueLockedUSD derivedETH volumeUSD }
           tokenHourDatas(first: 25 where: { token: $token } orderBy: periodStartUnix orderDirection: desc) { periodStartUnix volumeUSD priceUSD close }
         }`;
         const response = await fetch(this.endpoint, {
@@ -203,7 +228,9 @@ export class TheGraphMarketDataProvider {
         const payload = (await response.json()) as GraphResponse;
         if (payload.errors?.length) return market;
         const token = payload.data?.token;
-        if (isNonTargetSymbol(token?.symbol ?? market.symbol)) return { ...market, dataCompleteness: "quote-only" as const };
+        if (isNonTargetSymbol(token?.symbol ?? market.symbol) || !isLikelyMemeToken(token?.name ?? market.name, token?.symbol ?? market.symbol)) {
+          return { ...market, name: token?.name ?? market.name, symbol: token?.symbol ?? market.symbol, dataCompleteness: "quote-only" as const };
+        }
         const rows = (payload.data?.tokenHourDatas ?? [])
           .map((row) => ({ time: numeric(row.periodStartUnix), volume: numeric(row.volumeUSD), price: numeric(row.priceUSD || row.close) }))
           .filter((row) => row.time > 0 && row.price > 0)
@@ -212,6 +239,8 @@ export class TheGraphMarketDataProvider {
         if (rows.length === 0) {
           return {
             ...market,
+            name: token?.name ?? market.name,
+            symbol: token?.symbol ?? market.symbol,
             liquidityUsd: baseLiquidity > 0 ? baseLiquidity : market.liquidityUsd,
             dataCompleteness: baseLiquidity > 0 ? "full" : market.dataCompleteness
           };
@@ -236,6 +265,8 @@ export class TheGraphMarketDataProvider {
 
         return {
           ...market,
+          name: token?.name ?? market.name,
+          symbol: token?.symbol ?? market.symbol,
           volume24hUsd,
           volume1hUsd,
           avgHourlyVolumeUsd,
