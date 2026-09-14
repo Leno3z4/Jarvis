@@ -21,7 +21,7 @@ interface UniswapToken { name?: string; address?: string; chainId?: string | num
 interface UniswapResponse { tokens?: UniswapToken[]; }
 interface QuoteOutput { amount?: string; token?: string; }
 interface QuotePayload { quote?: { output?: { amount?: string; token?: string }; outputs?: QuoteOutput[] }; routing?: string; }
-interface PoolInfo { tokenAddressA?: string; tokenAddressB?: string; tokenAmountA?: string; tokenAmountB?: string; tokenDecimalsA?: number | string; tokenDecimalsB?: number | string; poolLiquidity?: string; poolProtocol?: string; fee?: string | number; }
+interface PoolInfo { tokenAddressA?: string; tokenAddressB?: string; tokenAmountA?: string; tokenAmountB?: string; tokenDecimalsA?: number | string; tokenDecimalsB?: number | string; poolLiquidity?: string; poolProtocol?: string; fee?: string | number; tickSpacing?: string | number; }
 interface PoolResponse { pools?: PoolInfo[]; }
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -105,12 +105,12 @@ export class UniswapTokenProvider {
     return (data.tokens ?? [])
       .filter((token) => Number(token.chainId) === CHAIN_ID && isAddress(token.address))
       .filter((token) => { const address = token.address!.toLowerCase(); return isErc20Address(token.address!) && address !== BASE_USDC.toLowerCase() && address !== BASE_WETH.toLowerCase(); })
-      .slice(0, Math.min(limit, 5))
+      .slice(0, Math.min(limit, 10))
       .map((token) => ({ address: token.address as `0x${string}`, symbol: token.symbol ?? token.name ?? "UNKNOWN", decimals: Number(token.decimals ?? 18), priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" }));
   }
 
   async discoverBaseMarkets(limit = 5): Promise<TokenMarket[]> {
-    const tokens = await this.discoverBaseTokenAddresses(Math.min(limit, 5));
+    const tokens = await this.discoverBaseTokenAddresses(Math.min(Math.max(limit, 5), 10));
     const markets: TokenMarket[] = [];
     const failures: string[] = [];
     const usdcForWeth = await quoteToken(this.apiKey, this.swapper, BASE_WETH, BASE_USDC, DISCOVERY_WETH_AMOUNT_WEI).catch((error) => { failures.push(`WETH/USDC:${error instanceof Error ? error.message : "unknown"}`); return 0n; });
@@ -119,38 +119,46 @@ export class UniswapTokenProvider {
     const wethAmount = Number(DISCOVERY_WETH_AMOUNT_WEI) / 1e18;
     const wethPriceUsd = usdcAmount / wethAmount;
 
-    for (const token of tokens) {
-      if (!token.address) continue;
-      const poolCandidates: TokenMarket[] = [];
-      try {
-        for (const feeTier of V3_FEE_TIERS) {
-          const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, BASE_USDC, "V3", feeTier.fee, feeTier.tickSpacing);
-          for (const pool of pools) {
-            const market = marketFromPool(token, pool, BASE_USDC, wethPriceUsd);
-            if (market) poolCandidates.push(market);
-          }
-        }
-      } catch (error) {
-        failures.push(`${token.symbol}:V3:USDC:${error instanceof Error ? error.message : "unknown"}`);
-      }
-      if (poolCandidates.length === 0) {
-        for (const feeTier of V3_FEE_TIERS) {
+    const tryPool = async (token: UniswapToken, quoteToken: `0x${string}`): Promise<TokenMarket[]> => {
+      const candidates: TokenMarket[] = [];
+      for (const protocol of ["V2", "V3"] as const) {
+        if (protocol === "V2") {
           try {
-            const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, BASE_WETH, "V3", feeTier.fee, feeTier.tickSpacing);
+            const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, quoteToken, "V2");
             for (const pool of pools) {
-              const market = marketFromPool(token, pool, BASE_WETH, wethPriceUsd);
-              if (market) poolCandidates.push(market);
+              const market = marketFromPool(token, pool, quoteToken, wethPriceUsd);
+              if (market) candidates.push(market);
             }
           } catch (error) {
-            failures.push(`${token.symbol}:V3:WETH:${feeTier.fee}:${error instanceof Error ? error.message : "unknown"}`);
+            failures.push(`${token.symbol}:${protocol}:${quoteToken === BASE_USDC ? "USDC" : "WETH"}:${error instanceof Error ? error.message : "unknown"}`);
+          }
+        } else {
+          for (const feeTier of V3_FEE_TIERS) {
+            try {
+              const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, quoteToken, "V3", feeTier.fee, feeTier.tickSpacing);
+              for (const pool of pools) {
+                const market = marketFromPool(token, pool, quoteToken, wethPriceUsd);
+                if (market) candidates.push(market);
+              }
+            } catch (error) {
+              failures.push(`${token.symbol}:V3:${quoteToken === BASE_USDC ? "USDC" : "WETH"}:${feeTier.fee}:${error instanceof Error ? error.message : "unknown"}`);
+            }
           }
         }
       }
+      return candidates;
+    };
+
+    for (const token of tokens) {
+      if (!token.address) continue;
+      let poolCandidates = await tryPool(token, BASE_USDC);
+      if (poolCandidates.length === 0) poolCandidates = await tryPool(token, BASE_WETH);
       const best = poolCandidates.sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0];
       if (best) markets.push(best);
+      else failures.push(`${token.symbol}: no usable V2/V3 pool for USDC or WETH`);
     }
 
-    if (markets.length === 0) throw new Error(`No Base Uniswap pool-backed markets discovered. Sample errors: ${failures.slice(0, 3).join(" | ")}`);
+    if (markets.length === 0) throw new Error(`No Base Uniswap pool-backed markets discovered. ${failures.slice(0, 8).join(" | ")}`);
     return markets;
   }
 }
