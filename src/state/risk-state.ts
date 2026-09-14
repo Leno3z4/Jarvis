@@ -50,13 +50,14 @@ export class RiskState {
     if (url.pathname === "/health") return Response.json({ ok: true, killSwitch: state.killSwitch });
     if (url.pathname === "/state" && request.method === "GET") return Response.json({ killSwitch: state.killSwitch, dayKey: state.dayKey, dailyLossWei: state.dailyLossWei.toString(), dailyTrades: state.dailyTrades, lastTradeAtByToken: state.lastTradeAtByToken });
     if (url.pathname === "/kill-switch" && request.method === "POST") { const body = await request.json() as { enabled: boolean }; state = { ...state, killSwitch: Boolean(body.enabled) }; writeState(this.sql, state); return Response.json({ ok: true, killSwitch: state.killSwitch }); }
-    if (url.pathname === "/authorize" && request.method === "POST") {
+    if ((url.pathname === "/check" || url.pathname === "/authorize") && request.method === "POST") {
       try {
         const payload = await request.json() as RiskPayload;
         const trade = parseTrade(payload.trade); const limits = parseLimits(payload.limits); const context = parseContext(payload.context); const cashToken = payload.cashToken;
         if (!cashToken) throw new Error("RiskState cashToken is missing.");
         const check = evaluateRisk(trade, limits, state, context, cashToken);
         if (!check.ok) return Response.json({ ok: false, reason: check.reason }, { status: 409 });
+        if (url.pathname === "/check") return Response.json({ ok: true, dryRun: true });
         if (trade.idempotencyKey) { if (this.sql.exec("SELECT key FROM risk_idempotency WHERE key = ?", trade.idempotencyKey).one()) return Response.json({ ok: false, reason: "Duplicate idempotency key." }, { status: 409 }); this.sql.exec("INSERT INTO risk_idempotency(key, created_at) VALUES (?, ?)", trade.idempotencyKey, nowMs); }
         const isBuy = trade.tokenIn.toLowerCase() === cashToken.toLowerCase();
         const token = (isBuy ? trade.tokenOut : trade.tokenIn).toLowerCase();
