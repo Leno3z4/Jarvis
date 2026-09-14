@@ -1,41 +1,22 @@
 import type { MarketProvider, TokenMarket } from "./types";
 
-const API_BASE = "https://api.geckoterminal.com/api/v2";
+const API_BASE = "https://api.dexscreener.com";
 const BASE_NETWORK = "base";
 
-interface GeckoTokenAttributes {
-  name?: string;
-  symbol?: string;
+interface DexPair {
+  chainId?: string;
+  dexId?: string;
+  pairAddress?: string;
+  baseToken?: { address?: string; name?: string; symbol?: string };
+  quoteToken?: { address?: string; name?: string; symbol?: string };
+  priceUsd?: string | null;
+  priceNative?: string | null;
+  liquidity?: { usd?: number | string | null; base?: number | string | null; quote?: number | string | null };
+  volume?: Record<string, number | string>;
+  priceChange?: Record<string, number | string>;
 }
 
-interface GeckoResource {
-  id?: string;
-  type?: string;
-  attributes?: GeckoTokenAttributes;
-}
-
-interface GeckoPoolAttributes {
-  base_token_price_usd?: string | null;
-  reserve_in_usd?: string | null;
-  volume_usd?: Record<string, string | number>;
-  price_change_percentage?: Record<string, string | number>;
-  name?: string;
-}
-
-interface GeckoPool {
-  id?: string;
-  type?: string;
-  attributes?: GeckoPoolAttributes;
-  relationships?: {
-    base_token?: { data?: { id?: string } };
-    quote_token?: { data?: { id?: string } };
-  };
-}
-
-interface GeckoResponse {
-  data?: GeckoPool[];
-  included?: GeckoResource[];
-}
+interface DexResponse { pairs?: DexPair[] | null; }
 
 function isAddress(value: unknown): value is `0x${string}` {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -43,151 +24,77 @@ function isAddress(value: unknown): value is `0x${string}` {
 
 function num(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function addressFromResourceId(value: unknown): `0x${string}` | null {
-  if (typeof value !== "string") return null;
-  const candidate = value.includes("_") ? value.slice(value.indexOf("_") + 1) : value;
-  return isAddress(candidate) ? candidate : null;
-}
-
-function marketFromPool(
-  pool: GeckoPool,
-  token: `0x${string}`,
-  symbol: string
-): TokenMarket {
-  const attributes = pool.attributes ?? {};
+function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
+  const base = pair.baseToken?.address?.toLowerCase() === address.toLowerCase();
+  const token = base ? pair.baseToken : pair.quoteToken;
+  const priceUsd = num(pair.priceUsd);
+  const liquidityUsd = num(pair.liquidity?.usd);
+  const volume24hUsd = num(pair.volume?.h24);
+  const change24hPct = num(pair.priceChange?.h24);
   return {
-    address: token,
-    symbol,
+    address,
+    symbol: token?.symbol ?? token?.name ?? "UNKNOWN",
     decimals: 18,
-    priceUsd: num(attributes.base_token_price_usd),
-    liquidityUsd: num(attributes.reserve_in_usd),
-    volume24hUsd: num(attributes.volume_usd?.h24),
-    change24hPct: num(attributes.price_change_percentage?.h24),
+    priceUsd,
+    liquidityUsd,
+    volume24hUsd,
+    change24hPct,
     observedAt: Date.now()
   };
 }
 
-function tokenSymbol(
-  resourceId: string | undefined,
-  included: Map<string, GeckoResource>,
-  poolName?: string
-): string {
-  const symbol = resourceId ? included.get(resourceId)?.attributes?.symbol : undefined;
-  if (symbol) return symbol;
-  const name = resourceId ? included.get(resourceId)?.attributes?.name : undefined;
-  if (name) return name;
-  const fromPool = poolName?.split("/")[0]?.trim();
-  return fromPool || "UNKNOWN";
-}
-
 export class DexScreenerMarketProvider implements MarketProvider {
   async getToken(address: `0x${string}`): Promise<TokenMarket> {
-    const response = await fetch(
-      `${API_BASE}/networks/${BASE_NETWORK}/tokens/${encodeURIComponent(address)}/pools`,
-      { headers: { accept: "application/json;version=20230203" } }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GeckoTerminal token lookup failed (${response.status}).`);
-    }
-
-    const data = (await response.json()) as GeckoResponse;
-    const pool = (data.data ?? [])[0];
-    if (!pool) throw new Error(`No Base market found for ${address}.`);
-
-    const included = new Map((data.included ?? []).map((item) => [item.id ?? "", item]));
-    const baseId = pool.relationships?.base_token?.data?.id;
-    const baseAddress = addressFromResourceId(baseId);
-    if (baseAddress?.toLowerCase() === address.toLowerCase()) {
-      return marketFromPool(pool, address, tokenSymbol(baseId, included, pool.attributes?.name));
-    }
-
-    return {
-      address,
-      symbol: tokenSymbol(baseId, included, pool.attributes?.name),
-      decimals: 18,
-      priceUsd: num(pool.attributes?.base_token_price_usd),
-      liquidityUsd: num(pool.attributes?.reserve_in_usd),
-      volume24hUsd: num(pool.attributes?.volume_usd?.h24),
-      change24hPct: num(pool.attributes?.price_change_percentage?.h24),
-      observedAt: Date.now()
-    };
+    if (!isAddress(address)) throw new Error(`Invalid token address: ${address}`);
+    const response = await fetch(`${API_BASE}/token-pairs/v1/${BASE_NETWORK}/${address}`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`DexScreener token lookup failed (${response.status}).`);
+    const pairs = await response.json() as DexPair[];
+    const basePairs = (pairs ?? []).filter((pair) => pair.chainId === BASE_NETWORK);
+    if (basePairs.length === 0) throw new Error(`No Base market found for ${address}.`);
+    const best = [...basePairs].sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd))[0];
+    return marketFromPair(best, address);
   }
 
   async getTokens(addresses: `0x${string}`[]): Promise<TokenMarket[]> {
-    const wanted = new Set(
-      addresses
-        .filter(isAddress)
-        .map((address) => address.toLowerCase())
-    );
-    if (wanted.size === 0) return [];
-
-    const response = await fetch(
-      `${API_BASE}/networks/${BASE_NETWORK}/pools?sort=h24_volume_usd_desc&page=1&include=base_token,quote_token`,
-      { headers: { accept: "application/json;version=20230203" } }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GeckoTerminal pool discovery failed (${response.status}).`);
-    }
-
-    const data = (await response.json()) as GeckoResponse;
-    const included = new Map((data.included ?? []).map((item) => [item.id ?? "", item]));
+    const wanted = addresses.filter(isAddress).map((address) => address.toLowerCase());
+    if (wanted.length === 0) return [];
+    const unique = [...new Set(wanted)].slice(0, 30);
+    const response = await fetch(`${API_BASE}/tokens/v1/${BASE_NETWORK}/${unique.join(",")}`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`DexScreener batch discovery failed (${response.status}).`);
+    const data = await response.json() as DexPair[];
     const bestByToken = new Map<string, { market: TokenMarket; liquidity: number }>();
 
-    for (const pool of data.data ?? []) {
-      const baseId = pool.relationships?.base_token?.data?.id;
-      const baseAddress = addressFromResourceId(baseId);
-      if (!baseAddress) continue;
-
-      const key = baseAddress.toLowerCase();
-      if (!wanted.has(key)) continue;
-
-      const market = marketFromPool(
-        pool,
-        baseAddress,
-        tokenSymbol(baseId, included, pool.attributes?.name)
-      );
-      const current = bestByToken.get(key);
-      if (!current || market.liquidityUsd > current.liquidity) {
-        bestByToken.set(key, { market, liquidity: market.liquidityUsd });
-      }
+    for (const pair of data ?? []) {
+      if (pair.chainId !== BASE_NETWORK) continue;
+      const baseAddress = pair.baseToken?.address;
+      const quoteAddress = pair.quoteToken?.address;
+      const tokenAddress = isAddress(baseAddress) && wanted.includes(baseAddress.toLowerCase())
+        ? baseAddress
+        : isAddress(quoteAddress) && wanted.includes(quoteAddress.toLowerCase())
+          ? quoteAddress
+          : null;
+      if (!tokenAddress) continue;
+      const market = marketFromPair(pair, tokenAddress);
+      const key = tokenAddress.toLowerCase();
+      const liquidity = market.liquidityUsd;
+      const existing = bestByToken.get(key);
+      if (!existing || liquidity > existing.liquidity) bestByToken.set(key, { market, liquidity });
     }
 
-    return [...bestByToken.values()]
-      .sort((a, b) => b.liquidity - a.liquidity)
-      .map((entry) => entry.market)
-      .slice(0, Math.min(addresses.length, 30));
+    return unique.map((address) => bestByToken.get(address)?.market).filter((market): market is TokenMarket => Boolean(market));
   }
 
   async discoverBaseMarkets(limit = 30): Promise<TokenMarket[]> {
-    const response = await fetch(
-      `${API_BASE}/networks/${BASE_NETWORK}/pools?sort=h24_volume_usd_desc&page=1&include=base_token,quote_token`,
-      { headers: { accept: "application/json;version=20230203" } }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GeckoTerminal discovery failed (${response.status}).`);
-    }
-
-    const data = (await response.json()) as GeckoResponse;
-    const included = new Map((data.included ?? []).map((item) => [item.id ?? "", item]));
-
-    return (data.data ?? [])
-      .map((pool) => {
-        const baseId = pool.relationships?.base_token?.data?.id;
-        const baseAddress = addressFromResourceId(baseId);
-        if (!baseAddress) return null;
-        return marketFromPool(pool, baseAddress, tokenSymbol(baseId, included, pool.attributes?.name));
-      })
-      .filter((market): market is TokenMarket => market !== null)
+    const response = await fetch(`${API_BASE}/latest/dex/search?q=base`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`DexScreener discovery failed (${response.status}).`);
+    const payload = await response.json() as DexResponse;
+    return (payload.pairs ?? [])
+      .filter((pair) => pair.chainId === BASE_NETWORK && isAddress(pair.baseToken?.address))
+      .map((pair) => marketFromPair(pair, pair.baseToken!.address as `0x${string}`))
       .sort((a, b) => b.volume24hUsd - a.volume24hUsd)
       .slice(0, Math.min(limit, 30));
   }
