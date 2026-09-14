@@ -13,6 +13,9 @@ export interface Env {
   PAPER_STARTING_CASH_WEI?: string;
   PAPER_TAKER_ADDRESS?: `0x${string}`;
   ZEROEX_API_KEY?: string;
+  UNISWAP_API_KEY?: string;
+  THE_GRAPH_API_KEY?: string;
+  THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID?: string;
   BASE_RPC_URL?: string;
   LIVE_WALLET_ADDRESS?: `0x${string}`;
   LIVE_PRIVATE_KEY?: `0x${string}`;
@@ -44,6 +47,8 @@ export interface JarvisConfig {
   paperStartingCashWei: bigint;
   paperTakerAddress?: `0x${string}`;
   zeroExApiKey?: string;
+  theGraphApiKey?: string;
+  theGraphUniswapV3SubgraphId?: string;
   baseRpcUrl: string;
   liveWalletAddress?: `0x${string}`;
   livePrivateKey?: `0x${string}`;
@@ -61,6 +66,7 @@ export interface JarvisConfig {
 
 const DEFAULT_PAPER_CASH_TOKEN = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
+const DEFAULT_UNISWAP_V3_SUBGRAPH_ID = "GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz";
 const numberEnv = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback;
 };
@@ -83,6 +89,8 @@ export function getConfig(env: Env): JarvisConfig {
     paperStartingCashWei: BigInt(env.PAPER_STARTING_CASH_WEI ?? "1000000000000000000"),
     paperTakerAddress: env.PAPER_TAKER_ADDRESS,
     zeroExApiKey: env.ZEROEX_API_KEY,
+    theGraphApiKey: env.THE_GRAPH_API_KEY,
+    theGraphUniswapV3SubgraphId: env.THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID ?? DEFAULT_UNISWAP_V3_SUBGRAPH_ID,
     baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
     liveWalletAddress: env.LIVE_WALLET_ADDRESS,
     livePrivateKey: env.LIVE_PRIVATE_KEY,
