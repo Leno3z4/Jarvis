@@ -26,8 +26,6 @@ const DEFAULT_CONFIG: StrategyConfig = {
   lowCapMinVolumeToLiquidity: 0.1
 };
 
-// These assets are useful as settlement/portfolio assets but are not primary
-// meme-coin entry targets. Existing holdings are still evaluated for exits.
 const NON_TARGET_SYMBOLS = new Set([
   "ETH", "WETH", "USDC", "USDT", "DAI", "USDBC", "USDE", "USDS",
   "CBUSD", "CBBTC", "CBETH", "WBTC", "BTC", "XBTC"
@@ -47,39 +45,32 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 2_500;
   const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.1;
   const nonTargetAsset = isNonTargetAsset(market.symbol);
-
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
     && market.liquidityUsd <= lowCapMaxLiquidity
     && market.volume24hUsd >= lowCapMinVolume
+    && market.liquidityUsd > 0
     && market.volume24hUsd / market.liquidityUsd >= lowCapVolumeRatio;
 
   if (nonTargetAsset) reasons.push("non-target settlement/blue-chip asset");
 
   if (market.dataCompleteness === "quote-only") {
-    score += 40;
-    reasons.push("live Uniswap quote available");
-    reasons.push("liquidity unavailable from current provider");
-    reasons.push("volume unavailable from current provider");
-    reasons.push("momentum unavailable from current provider");
+    reasons.push("market data incomplete");
   } else {
-    if (market.liquidityUsd >= config.minLiquidityUsd) {
-      score += 30;
-      reasons.push("healthy liquidity");
-    } else if (isLowCapCandidate) {
+    if (isLowCapCandidate) {
       score += 25;
       reasons.push("low-cap liquidity tier");
     } else {
-      reasons.push("liquidity below floor");
+      reasons.push("outside low-cap liquidity band");
     }
 
     if (market.volume24hUsd >= config.minVolume24hUsd) {
       score += 25;
       reasons.push("sufficient 24h volume");
-    } else if (isLowCapCandidate) {
+    } else if (isLowCapCandidate && market.volume24hUsd >= lowCapMinVolume) {
       score += 15;
       reasons.push("active low-cap volume");
     } else {
-      reasons.push("volume below floor");
+      reasons.push("volume below low-cap floor");
     }
 
     if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) {
@@ -95,54 +86,43 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   }
 
   const staleMs = Date.now() - market.observedAt;
-  if (staleMs <= 60_000) { score += 10; reasons.push("fresh market data"); } else reasons.push("stale market data");
+  if (staleMs <= 60_000) { score += 10; reasons.push("fresh market data"); }
+  else reasons.push("stale market data");
 
   const hasValidPrice = Number.isFinite(market.priceUsd) && market.priceUsd > 0;
-  if (hasValidPrice) { score += 10; reasons.push("valid price"); } else reasons.push("price unavailable");
+  if (hasValidPrice) { score += 10; reasons.push("valid price"); }
+  else reasons.push("price unavailable");
 
-  if (market.volumeSpikeRatio !== undefined && market.volumeSpikeRatio >= 2) { score += 10; reasons.push("volume spike vs hourly baseline"); }
-  if (market.change6hPct !== undefined && market.change6hPct >= 3 && market.change6hPct <= 30) { score += 8; reasons.push("healthy 6h impulse"); }
-  if (market.change1hPct !== undefined && market.change1hPct >= 0.5 && market.change1hPct <= 12) { score += 5; reasons.push("positive short-term impulse"); }
-  if (market.nearRecentHighPct !== undefined && market.nearRecentHighPct >= 97) { score += 7; reasons.push("pressing recent high"); }
+  if (market.volumeSpikeRatio !== undefined && market.volumeSpikeRatio >= 2) {
+    score += 10;
+    reasons.push("volume spike vs hourly baseline");
+  }
+  if (market.change6hPct !== undefined && market.change6hPct >= 3 && market.change6hPct <= 30) {
+    score += 8;
+    reasons.push("healthy 6h impulse");
+  }
+  if (market.change1hPct !== undefined && market.change1hPct >= 0.5 && market.change1hPct <= 12) {
+    score += 5;
+    reasons.push("positive short-term impulse");
+  }
+  if (market.nearRecentHighPct !== undefined && market.nearRecentHighPct >= 97) {
+    score += 7;
+    reasons.push("pressing recent high");
+  }
   if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
 
-  // Entry filter: require complete market data, real participation, positive
-  // short-term momentum, and recent volume expansion. This removes stablecoins
-  // and large blue-chip/settlement assets from Gemini entry consideration while
-  // keeping existing positions available for exit analysis.
-  const targetEntryEligible = market.dataCompleteness === "full"
-    && !nonTargetAsset
-    && hasValidPrice
-    && staleMs <= 60_000
-    && market.change24hPct >= 0
-    && (market.volumeSpikeRatio ?? 0) >= 1.25
-    && (
-      isLowCapCandidate
-      || ((market.change1hPct ?? 0) >= 0.5 && (market.change6hPct ?? 0) >= 1)
-      || (market.nearRecentHighPct ?? 0) >= 97
-    );
-
-  const degradedEligible = market.dataCompleteness === "liquidity-price-only"
-    && !nonTargetAsset
-    && market.liquidityUsd >= config.minLiquidityUsd
-    && hasValidPrice
-    && staleMs <= 60_000;
+  // New entries are strictly low-cap. Existing held positions are handled
+  // separately by evaluateMarkets so they can still be evaluated for exits.
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
     && isLowCapCandidate
     && hasValidPrice
     && staleMs <= 60_000
     && market.change24hPct >= 0
-    && (market.volumeSpikeRatio ?? 0) >= 1.25;
+    && (market.volumeSpikeRatio ?? 0) >= 1.25
+    && score >= config.minScore;
 
-  return {
-    market,
-    score,
-    reasons,
-    eligible: market.dataCompleteness !== "quote-only"
-      && (targetEntryEligible || degradedEligible || lowCapEligible)
-      && (score >= config.minScore || degradedEligible || lowCapEligible)
-  };
+  return { market, score, reasons, eligible: lowCapEligible };
 }
 
 export function scanMarkets(markets: TokenMarket[], config: StrategyConfig = DEFAULT_CONFIG): CandidateScore[] {
