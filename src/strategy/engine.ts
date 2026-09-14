@@ -26,6 +26,19 @@ const DEFAULT_CONFIG: StrategyConfig = {
   lowCapMinVolumeToLiquidity: 0.1
 };
 
+// These assets are useful as settlement/portfolio assets but are not primary
+// meme-coin entry targets. Existing holdings are still evaluated for exits.
+const NON_TARGET_SYMBOLS = new Set([
+  "ETH", "WETH", "USDC", "USDT", "DAI", "USDBC", "USDE", "USDS",
+  "CBUSD", "CBBTC", "CBETH", "WBTC", "BTC", "XBTC"
+]);
+
+function isNonTargetAsset(symbol: string): boolean {
+  const normalized = symbol.trim().toUpperCase();
+  if (NON_TARGET_SYMBOLS.has(normalized)) return true;
+  return /^(USD|USDC|USDT|DAI|EUR|GBP|JPY)[A-Z0-9]*$/.test(normalized);
+}
+
 export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAULT_CONFIG): CandidateScore {
   const reasons: string[] = [];
   let score = 0;
@@ -33,11 +46,14 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const lowCapMaxLiquidity = config.lowCapMaxLiquidityUsd ?? 250_000;
   const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 2_500;
   const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.1;
+  const nonTargetAsset = isNonTargetAsset(market.symbol);
 
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
     && market.liquidityUsd <= lowCapMaxLiquidity
     && market.volume24hUsd >= lowCapMinVolume
     && market.volume24hUsd / market.liquidityUsd >= lowCapVolumeRatio;
+
+  if (nonTargetAsset) reasons.push("non-target settlement/blue-chip asset");
 
   if (market.dataCompleteness === "quote-only") {
     score += 40;
@@ -90,11 +106,29 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   if (market.nearRecentHighPct !== undefined && market.nearRecentHighPct >= 97) { score += 7; reasons.push("pressing recent high"); }
   if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
 
+  // Entry filter: require complete market data, real participation, positive
+  // short-term momentum, and recent volume expansion. This removes stablecoins
+  // and large blue-chip/settlement assets from Gemini entry consideration while
+  // keeping existing positions available for exit analysis.
+  const targetEntryEligible = market.dataCompleteness === "full"
+    && !nonTargetAsset
+    && hasValidPrice
+    && staleMs <= 60_000
+    && market.change24hPct >= 0
+    && (market.volumeSpikeRatio ?? 0) >= 1.25
+    && (
+      isLowCapCandidate
+      || ((market.change1hPct ?? 0) >= 0.5 && (market.change6hPct ?? 0) >= 1)
+      || (market.nearRecentHighPct ?? 0) >= 97
+    );
+
   const degradedEligible = market.dataCompleteness === "liquidity-price-only"
+    && !nonTargetAsset
     && market.liquidityUsd >= config.minLiquidityUsd
     && hasValidPrice
     && staleMs <= 60_000;
   const lowCapEligible = market.dataCompleteness === "full"
+    && !nonTargetAsset
     && isLowCapCandidate
     && hasValidPrice
     && staleMs <= 60_000
@@ -105,10 +139,15 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     market,
     score,
     reasons,
-    eligible: market.dataCompleteness !== "quote-only" && (score >= config.minScore || degradedEligible || lowCapEligible)
+    eligible: market.dataCompleteness !== "quote-only"
+      && (targetEntryEligible || degradedEligible || lowCapEligible)
+      && (score >= config.minScore || degradedEligible || lowCapEligible)
   };
 }
 
 export function scanMarkets(markets: TokenMarket[], config: StrategyConfig = DEFAULT_CONFIG): CandidateScore[] {
-  return markets.map((market) => scoreMarket(market, config)).filter((candidate) => candidate.eligible).sort((a, b) => b.score - a.score);
+  return markets
+    .map((market) => scoreMarket(market, config))
+    .filter((candidate) => candidate.eligible)
+    .sort((a, b) => b.score - a.score);
 }
