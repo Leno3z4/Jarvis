@@ -15,7 +15,10 @@ export async function runStrategyScan(config: {
   const uniswapApiKey = config.strategy.uniswapApiKey;
   if (!uniswapApiKey) throw new Error("Uniswap API key is required for Base token discovery.");
 
-  const limit = Math.min(Math.max(config.limit ?? 20, 20), 30);
+  // Discovery is intentionally broader than the Gemini candidate cap. This lets
+  // the deterministic scanner see low-cap setups that are absent from the very
+  // top of Uniswap's ranked lists, while evaluateMarkets still limits Gemini work.
+  const limit = Math.min(Math.max(config.limit ?? 30, 30), 50);
   const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
   const heldTokenAddresses = Object.entries(config.strategy.heldPositions ?? {})
     .filter(([, amount]) => amount !== "0")
