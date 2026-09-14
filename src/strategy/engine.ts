@@ -22,8 +22,8 @@ const DEFAULT_CONFIG: StrategyConfig = {
   minScore: 60,
   lowCapMinLiquidityUsd: 10_000,
   lowCapMaxLiquidityUsd: 250_000,
-  lowCapMinVolume24hUsd: 2_500,
-  lowCapMinVolumeToLiquidity: 0.1
+  lowCapMinVolume24hUsd: 1_500,
+  lowCapMinVolumeToLiquidity: 0.04
 };
 
 const NON_TARGET_SYMBOLS = new Set([
@@ -37,13 +37,15 @@ const MEME_TERMS = [
   "turbo", "toshi", "bobo", "andy", "ponke", "neiro", "mfer", "meme", "inu",
   "dog", "cat", "frog", "ape", "monkey", "penguin", "chad", "giga", "ladys",
   "normie", "keycat", "npc", "higher", "keyboard", "hamster", "goat", "panda",
-  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown"
+  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown",
+  "ski", "mochi", "bald", "tybg", "blob", "based", "aerobud", "wolf", "mister",
+  "spx", "ninja", "chog", "doginme"
 ];
 
 const NON_MEME_TERMS = [
   "wrapped", "staked", "restaked", "liquid staking", "yield", "vault", "index",
   "governance", "oracle", "exchange", "router", "bridge", "infrastructure", "synthetic",
-  "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
+  "stablecoin", "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
   "compound", "lido", "rocket pool", "maker", "curve"
 ];
 
@@ -73,8 +75,8 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   let score = 0;
   const lowCapMinLiquidity = config.lowCapMinLiquidityUsd ?? 10_000;
   const lowCapMaxLiquidity = config.lowCapMaxLiquidityUsd ?? 250_000;
-  const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 2_500;
-  const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.1;
+  const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 1_500;
+  const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.04;
   const nonTargetAsset = isNonTargetAsset(market.symbol);
   const memeToken = isMemeToken(market);
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
