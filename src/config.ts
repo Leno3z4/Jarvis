@@ -59,7 +59,7 @@ export interface JarvisConfig {
     minLiquidityUsd: number; minVolume24hUsd: number; minChange24hPct: number; maxChange24hPct: number;
     minScore: number; maxCandidates: number; minGeminiConfidence: number; maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
     quoteAmountWei: bigint; slippageBps: number;
-    uniswapApiKey?: string; theGraphApiKey?: string; theGraphUniswapV3SubgraphId?: string;
+    uniswapApiKey?: string; theGraphApiKey?: string; theGraphApiKeySource: "env" | "process.env" | "missing"; theGraphUniswapV3SubgraphId?: string;
   };
 }
 
@@ -71,8 +71,19 @@ const numberEnv = (value: string | undefined, fallback: number): number => {
 };
 const intEnv = (value: string | undefined, fallback: number): number => Math.max(0, Math.floor(numberEnv(value, fallback)));
 
+type ProcessLike = { env?: Record<string, string | undefined> };
+
+function resolveSecret(env: Env, key: "THE_GRAPH_API_KEY"): { value?: string; source: "env" | "process.env" | "missing" } {
+  const direct = env[key];
+  if (direct) return { value: direct, source: "env" };
+  const processValue = (globalThis as { process?: ProcessLike }).process?.env?.[key];
+  if (processValue) return { value: processValue, source: "process.env" };
+  return { source: "missing" };
+}
+
 export function getConfig(env: Env): JarvisConfig {
   const mode = env.TRADING_MODE === "live" ? "live" : "paper";
+  const graphSecret = resolveSecret(env, "THE_GRAPH_API_KEY");
   return {
     mode,
     risk: {
@@ -108,7 +119,8 @@ export function getConfig(env: Env): JarvisConfig {
       quoteAmountWei: BigInt(env.STRATEGY_QUOTE_AMOUNT_WEI ?? "10000000000000000"),
       slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100))),
       uniswapApiKey: env.UNISWAP_API_KEY,
-      theGraphApiKey: env.THE_GRAPH_API_KEY,
+      theGraphApiKey: graphSecret.value,
+      theGraphApiKeySource: graphSecret.source,
       theGraphUniswapV3SubgraphId: env.THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID ?? DEFAULT_UNISWAP_V3_SUBGRAPH_ID
     }
   };
