@@ -4,18 +4,18 @@ const ZEROEX_URL = "https://api.0x.org/swap/allowance-holder/quote";
 
 interface ZeroExQuoteResponse {
   blockNumber?: string | null;
-  buyAmount: string;
-  buyToken: string;
-  sellAmount: string;
-  sellToken: string;
-  gas?: string;
-  gasPrice?: string;
+  buyAmount?: string | null;
+  buyToken?: string | null;
+  sellAmount?: string | null;
+  sellToken?: string | null;
+  gas?: string | null;
+  gasPrice?: string | null;
   transaction?: {
-    to: string;
-    data: string;
-    value: string;
-    gas?: string;
-    gasPrice?: string;
+    to?: string | null;
+    data?: string | null;
+    value?: string | null;
+    gas?: string | null;
+    gasPrice?: string | null;
   };
   liquidityAvailable?: boolean;
   allowanceTarget?: string;
@@ -24,6 +24,28 @@ interface ZeroExQuoteResponse {
     balance?: { token: string; actual: string; expected: string } | null;
     simulationIncomplete?: boolean;
   };
+}
+
+function parsePositiveBigInt(value: string | null | undefined, field: string): bigint {
+  if (value == null || value.trim() === "") {
+    throw new Error(`0x quote missing ${field}.`);
+  }
+  try {
+    const parsed = BigInt(value);
+    if (parsed <= 0n) throw new Error();
+    return parsed;
+  } catch {
+    throw new Error(`0x quote returned invalid ${field}: ${value}.`);
+  }
+}
+
+function parseOptionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
+  if (value == null || value.trim() === "") return undefined;
+  try {
+    return BigInt(value);
+  } catch {
+    throw new Error(`0x quote returned invalid ${field}: ${value}.`);
+  }
 }
 
 export interface ExecutableQuote extends Quote {
@@ -83,9 +105,20 @@ export class ZeroExQuoteProvider implements QuoteProvider {
         `0x reports insufficient taker balance (actual=${data.issues.balance.actual}, expected=${data.issues.balance.expected}).`
       );
     }
-    if (!data.transaction?.to || !data.transaction.data) {
+
+    const buyAmount = parsePositiveBigInt(data.buyAmount, "buyAmount");
+    const sellAmount = parsePositiveBigInt(data.sellAmount, "sellAmount");
+    const transactionTo = data.transaction?.to;
+    const transactionData = data.transaction?.data;
+    if (!transactionTo || !transactionData) {
       throw new Error("0x returned no executable transaction.");
     }
+
+    const gas = parseOptionalBigInt(data.transaction?.gas, "transaction.gas");
+    const gasPrice = parseOptionalBigInt(data.transaction?.gasPrice, "transaction.gasPrice");
+    const topGas = parseOptionalBigInt(data.gas, "gas");
+    const topGasPrice = parseOptionalBigInt(data.gasPrice, "gasPrice");
+    const transactionValue = parseOptionalBigInt(data.transaction?.value, "transaction.value") ?? 0n;
 
     const allowance = data.issues?.allowance ?? null;
     const spender = allowance?.spender ?? data.allowanceTarget;
@@ -93,22 +126,26 @@ export class ZeroExQuoteProvider implements QuoteProvider {
     return {
       tokenIn: request.tokenIn,
       tokenOut: request.tokenOut,
-      amountInWei: BigInt(data.sellAmount),
-      amountOutWei: BigInt(data.buyAmount),
+      amountInWei: sellAmount,
+      amountOutWei: buyAmount,
       priceImpactBps: 0,
-      estimatedGasWei: data.gas && data.gasPrice ? BigInt(data.gas) * BigInt(data.gasPrice) : undefined,
+      estimatedGasWei: gas && gasPrice
+        ? gas * gasPrice
+        : topGas && topGasPrice
+          ? topGas * topGasPrice
+          : undefined,
       provider: "0x",
       observedAt: Date.now(),
       transaction: {
-        to: data.transaction.to as `0x${string}`,
-        data: data.transaction.data as `0x${string}`,
-        value: BigInt(data.transaction.value ?? "0"),
-        gas: data.transaction.gas ? BigInt(data.transaction.gas) : undefined,
-        gasPrice: data.transaction.gasPrice ? BigInt(data.transaction.gasPrice) : undefined
+        to: transactionTo as `0x${string}`,
+        data: transactionData as `0x${string}`,
+        value: transactionValue,
+        gas,
+        gasPrice
       },
       allowanceTarget: spender as `0x${string}` | undefined,
-      allowanceRequired: allowance
-        ? BigInt(allowance.required ?? data.sellAmount)
+      allowanceRequired: allowance?.required
+        ? parsePositiveBigInt(allowance.required, "allowance.required")
         : undefined,
       balanceIssue: Boolean(data.issues?.balance),
       simulationIncomplete: Boolean(data.issues?.simulationIncomplete)
