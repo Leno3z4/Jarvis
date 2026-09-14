@@ -68,13 +68,8 @@ async function authorizePaperTrade(
   trade: TradeRequest
 ): Promise<Response | null> {
   const portfolio = await getPaperPortfolio(env, config);
-  const exposure = Object.values(portfolio.positions).reduce(
-    (sum, value) => sum + BigInt(value),
-    0n
-  );
-  const tokenExposure = BigInt(
-    portfolio.positions[trade.tokenOut.toLowerCase()] ?? "0"
-  );
+  const exposure = Object.values(portfolio.positions).reduce((sum, value) => sum + BigInt(value), 0n);
+  const tokenExposure = BigInt(portfolio.positions[trade.tokenOut.toLowerCase()] ?? "0");
   const limits = config.risk;
 
   const response = await riskStub(env).fetch(
@@ -95,8 +90,7 @@ async function authorizePaperTrade(
         },
         limits: {
           maxTradeWei: limits.maxTradeWei.toString(),
-          maxPortfolioExposureWei:
-            limits.maxPortfolioExposureWei.toString(),
+          maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(),
           maxTokenExposureWei: limits.maxTokenExposureWei.toString(),
           maxOpenPositions: limits.maxOpenPositions,
           maxTradesPerDay: limits.maxTradesPerDay,
@@ -110,10 +104,7 @@ async function authorizePaperTrade(
   return response.ok ? null : response;
 }
 
-async function runPaperCycle(
-  env: Env,
-  config: ReturnType<typeof getConfig>
-) {
+async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
   const missing: string[] = [];
   if (config.mode !== "paper") missing.push("TRADING_MODE=paper");
   if (!config.zeroExApiKey) missing.push("ZEROEX_API_KEY");
@@ -121,30 +112,14 @@ async function runPaperCycle(
   if (!config.gemini.primaryKey) missing.push("GEMINI_API_KEY");
 
   if (missing.length > 0) {
-    return {
-      executed: false,
-      reason: "Paper automation is not fully configured.",
-      missing
-    };
+    return { executed: false, reason: "Paper automation is not fully configured.", missing };
   }
 
   const result = await evaluateAutomation({
     gemini: [
-      {
-        role: "primary",
-        apiKey: config.gemini.primaryKey,
-        model: config.gemini.primaryModel
-      },
-      {
-        role: "fallback1",
-        apiKey: config.gemini.fallback1Key,
-        model: config.gemini.fallback1Model
-      },
-      {
-        role: "fallback2",
-        apiKey: config.gemini.fallback2Key,
-        model: config.gemini.fallback2Model
-      }
+      { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
+      { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
+      { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
     ],
     strategy: {
       ...config.strategy,
@@ -158,30 +133,20 @@ async function runPaperCycle(
     cashToken: config.paperCashToken,
     quoteAmountWei: config.strategy.quoteAmountWei,
     slippageBps: config.strategy.slippageBps,
-    risk: config.risk
+    risk: config.risk,
+    allowQuoteBalanceIssues: config.strategy.allowQuoteBalanceIssues
   });
 
-  if (!result.trade) {
-    return {
-      executed: false,
-      reason: result.blockedReason ?? "No trade selected."
-    };
-  }
+  if (!result.trade) return { executed: false, reason: result.blockedReason ?? "No trade selected." };
 
   const validation = validateTrade(result.trade, config.risk);
   if (validation) return { executed: false, reason: validation };
 
-  const riskResponse = await authorizePaperTrade(
-    env,
-    config,
-    result.trade
-  );
+  const riskResponse = await authorizePaperTrade(env, config, result.trade);
   if (riskResponse) {
     return {
       executed: false,
-      reason:
-        (await riskResponse.json() as { reason?: string }).reason ??
-        "Risk gate blocked trade."
+      reason: (await riskResponse.json() as { reason?: string }).reason ?? "Risk gate blocked trade."
     };
   }
 
@@ -190,10 +155,7 @@ async function runPaperCycle(
       `https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
       {
         method: "POST",
-        body: JSON.stringify(
-          result.trade,
-          (_, value) => typeof value === "bigint" ? value.toString() : value
-        ),
+        body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value),
         headers: { "content-type": "application/json" }
       }
     )
@@ -208,134 +170,69 @@ export default {
     if (request.method === "OPTIONS") return json({ ok: true });
 
     const url = new URL(request.url);
-    const config = getConfig(env);
 
-    if (url.pathname === "/health" && request.method === "GET") {
-      return json({
-        ok: true,
-        mode: config.mode,
-        liveTradingEnabled: config.liveTradingEnabled,
-        geminiFallbacksConfigured: [
-          Boolean(config.gemini.primaryKey),
-          Boolean(config.gemini.fallback1Key),
-          Boolean(config.gemini.fallback2Key)
-        ].filter(Boolean).length,
-        configuration: {
-          geminiPrimaryConfigured: Boolean(config.gemini.primaryKey),
-          geminiFallback1Configured: Boolean(config.gemini.fallback1Key),
-          geminiFallback2Configured: Boolean(config.gemini.fallback2Key),
-          zeroExConfigured: Boolean(config.zeroExApiKey),
-          paperTakerConfigured: Boolean(config.paperTakerAddress),
-          theGraphConfigured: Boolean(config.strategy.theGraphApiKey),
-          theGraphSecretSource: config.strategy.theGraphApiKeySource
-        }
-      });
-    }
-
-    if (url.pathname === "/diagnostics/graph" && request.method === "GET") {
-      const provider = new TheGraphMarketDataProvider(
-        config.strategy.theGraphApiKey ?? "",
-        config.strategy.theGraphUniswapV3SubgraphId
-      );
-      return json(await provider.diagnose());
-    }
-
-    if (
-      url.pathname === "/risk/state" &&
-      request.method === "GET"
-    ) {
-      return riskStub(env).fetch("https://jarvis-risk/state");
-    }
-
-    if (
-      url.pathname === "/risk/kill-switch" &&
-      request.method === "POST"
-    ) {
-      return riskStub(env).fetch(
-        new Request("https://jarvis-risk/kill-switch", request)
-      );
-    }
-
-    if (
-      url.pathname === "/strategy/run" &&
-      request.method === "POST"
-    ) {
+    if (url.pathname === "/strategy/run" && request.method === "POST") {
       try {
+        const config = getConfig(env);
+        return json({ ok: true, ...(await runPaperCycle(env, config)) });
+      } catch (error) {
+        return json({ ok: false, error: error instanceof Error ? error.message : "Strategy run failed." }, { status: 503 });
+      }
+    }
+
+    try {
+      const config = getConfig(env);
+
+      if (url.pathname === "/health" && request.method === "GET") {
         return json({
           ok: true,
-          ...(await runPaperCycle(env, config))
+          mode: config.mode,
+          liveTradingEnabled: config.liveTradingEnabled,
+          geminiFallbacksConfigured: [Boolean(config.gemini.primaryKey), Boolean(config.gemini.fallback1Key), Boolean(config.gemini.fallback2Key)].filter(Boolean).length,
+          configuration: {
+            geminiPrimaryConfigured: Boolean(config.gemini.primaryKey),
+            geminiFallback1Configured: Boolean(config.gemini.fallback1Key),
+            geminiFallback2Configured: Boolean(config.gemini.fallback2Key),
+            zeroExConfigured: Boolean(config.zeroExApiKey),
+            paperTakerConfigured: Boolean(config.paperTakerAddress),
+            theGraphConfigured: Boolean(config.strategy.theGraphApiKey),
+            theGraphSecretSource: config.strategy.theGraphApiKeySource
+          }
         });
-      } catch (error) {
-        return json(
-          {
-            ok: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Strategy run failed."
-          },
-          { status: 503 }
-        );
       }
-    }
 
-    if (url.pathname === "/trade" && request.method === "POST") {
-      try {
+      if (url.pathname === "/diagnostics/graph" && request.method === "GET") {
+        const provider = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey ?? "", config.strategy.theGraphUniswapV3SubgraphId);
+        return json(await provider.diagnose());
+      }
+
+      if (url.pathname === "/risk/state" && request.method === "GET") return riskStub(env).fetch("https://jarvis-risk/state");
+      if (url.pathname === "/risk/kill-switch" && request.method === "POST") return riskStub(env).fetch(new Request("https://jarvis-risk/kill-switch", request));
+
+      if (url.pathname === "/trade" && request.method === "POST") {
         if (config.mode === "live") {
-          return json(
-            {
-              ok: false,
-              error:
-                "Live execution is fail-closed until wallet-level persistent exposure accounting is enabled."
-            },
-            { status: 503 }
-          );
+          return json({ ok: false, error: "Live execution is fail-closed until wallet-level persistent exposure accounting is enabled." }, { status: 503 });
         }
-
-        const trade = parseTrade(
-          await request.json() as TradePayload
-        );
-        const basic = validateTrade(trade, config.risk);
-        if (basic) {
-          return json({ ok: false, error: basic }, { status: 400 });
+        try {
+          const trade = parseTrade(await request.json() as TradePayload);
+          const basic = validateTrade(trade, config.risk);
+          if (basic) return json({ ok: false, error: basic }, { status: 400 });
+          const riskResponse = await authorizePaperTrade(env, config, trade);
+          if (riskResponse) return riskResponse;
+          return legacy.fetch(new Request(request, { body: JSON.stringify({ ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() }), headers: request.headers } as Request), env);
+        } catch (error) {
+          return json({ ok: false, error: error instanceof Error ? error.message : "Invalid trade payload." }, { status: 400 });
         }
-
-        const riskResponse = await authorizePaperTrade(
-          env,
-          config,
-          trade
-        );
-        if (riskResponse) return riskResponse;
-
-        return legacy.fetch(
-          new Request(request, {
-            body: JSON.stringify({
-              ...trade,
-              amountInWei: trade.amountInWei.toString(),
-              amountOutWei: trade.amountOutWei.toString()
-            }),
-            headers: request.headers
-          } as Request),
-          env
-        );
-      } catch {
-        return json(
-          { ok: false, error: "Invalid trade payload." },
-          { status: 400 }
-        );
       }
-    }
 
-    return legacy.fetch(request, env);
+      return legacy.fetch(request, env);
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : "Worker request failed." }, { status: 503 });
+    }
   },
 
-  async scheduled(
-    _event: ScheduledEvent,
-    env: Env
-  ): Promise<void> {
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     const config = getConfig(env);
-    if (config.mode === "paper") {
-      await runPaperCycle(env, config);
-    }
+    if (config.mode === "paper") await runPaperCycle(env, config);
   }
 };
