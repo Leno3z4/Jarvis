@@ -7,6 +7,12 @@ export interface TokenMarket {
   volume24hUsd: number;
   change24hPct: number;
   observedAt: number;
+  volume1hUsd?: number;
+  avgHourlyVolumeUsd?: number;
+  volumeSpikeRatio?: number;
+  change1hPct?: number;
+  change6hPct?: number;
+  nearRecentHighPct?: number;
   dataCompleteness?: "full" | "liquidity-price-only" | "quote-only";
 }
 
