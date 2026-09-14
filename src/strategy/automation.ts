@@ -13,6 +13,7 @@ export interface AutomationConfig {
   quoteAmountWei: bigint;
   slippageBps: number;
   risk: RiskLimits;
+  allowQuoteBalanceIssues?: boolean;
 }
 
 export interface AutomationResult {
@@ -50,6 +51,7 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     strategy: config.strategy,
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
+    allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
     limit: config.strategy.maxCandidates * 6
   });
 
