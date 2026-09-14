@@ -2,6 +2,7 @@ import type { RiskLimits, RiskState as RiskStateData, TradeRequest } from "../tr
 import { evaluateRisk, dayKeyUtc, type TradeContext } from "../trading/risk";
 
 interface RiskPayload {
+  cashToken: `0x${string}`;
   trade: { tokenIn: `0x${string}`; tokenOut: `0x${string}`; amountInWei: string; amountOutWei: string; slippageBps: number; reason: string; idempotencyKey?: string };
   context: { currentExposureWei: string; tokenExposureWei: string; openPositions: number; nowMs: number };
   limits: { maxTradeWei: string; maxPortfolioExposureWei: string; maxTokenExposureWei: string; maxOpenPositions: number; maxTradesPerDay: number; cooldownSeconds: number; maxDailyLossWei: string };
@@ -91,7 +92,9 @@ export class RiskState {
         const trade = parseTrade(payload.trade);
         const limits = parseLimits(payload.limits);
         const context = parseContext(payload.context);
-        const check = evaluateRisk(trade, limits, state, context);
+        const cashToken = payload.cashToken;
+        if (!cashToken) throw new Error("RiskState cashToken is missing.");
+        const check = evaluateRisk(trade, limits, state, context, cashToken);
         if (!check.ok) return Response.json({ ok: false, reason: check.reason }, { status: 409 });
         if (trade.idempotencyKey) {
           if (this.sql.exec("SELECT key FROM risk_idempotency WHERE key = ?", trade.idempotencyKey).one()) return Response.json({ ok: false, reason: "Duplicate idempotency key." }, { status: 409 });
