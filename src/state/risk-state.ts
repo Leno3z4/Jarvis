@@ -8,10 +8,27 @@ interface RiskPayload {
 }
 
 function defaultState(): RiskStateData { return { killSwitch: false, dayKey: dayKeyUtc(), dailyLossWei: 0n, dailyTrades: 0, lastTradeAtByToken: {} }; }
+
+function requiredBigInt(value: unknown, field: string): bigint {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    throw new Error(`RiskState ${field} is missing.`);
+  }
+  const text = String(value).trim();
+  if (!text) throw new Error(`RiskState ${field} is empty.`);
+  try { return BigInt(text); }
+  catch { throw new Error(`RiskState ${field} is invalid: ${text.slice(0, 80)}`); }
+}
+
 function readState(sql: SqlStorage, nowMs: number): RiskStateData {
   const rows = sql.exec<{ key: string; value: string }>("SELECT key, value FROM risk_meta").toArray();
   const values = new Map(rows.map((row) => [row.key, row.value]));
-  return { killSwitch: values.get("kill_switch") === "1", dayKey: values.get("day_key") ?? dayKeyUtc(new Date(nowMs)), dailyLossWei: BigInt(values.get("daily_loss_wei") ?? "0"), dailyTrades: Number(values.get("daily_trades") ?? "0"), lastTradeAtByToken: JSON.parse(values.get("last_trade_at_by_token") ?? "{}") as Record<string, number> };
+  return {
+    killSwitch: values.get("kill_switch") === "1",
+    dayKey: values.get("day_key") ?? dayKeyUtc(new Date(nowMs)),
+    dailyLossWei: requiredBigInt(values.get("daily_loss_wei") ?? "0", "daily_loss_wei"),
+    dailyTrades: Number(values.get("daily_trades") ?? "0"),
+    lastTradeAtByToken: JSON.parse(values.get("last_trade_at_by_token") ?? "{}") as Record<string, number>
+  };
 }
 function normalizeDay(state: RiskStateData, nowMs: number): RiskStateData { const dayKey = dayKeyUtc(new Date(nowMs)); return state.dayKey === dayKey ? state : { ...defaultState(), dayKey, killSwitch: state.killSwitch }; }
 function writeState(sql: SqlStorage, state: RiskStateData): void {
@@ -21,9 +38,36 @@ function writeState(sql: SqlStorage, state: RiskStateData): void {
   sql.exec("INSERT OR REPLACE INTO risk_meta(key, value) VALUES ('daily_trades', ?)", String(state.dailyTrades));
   sql.exec("INSERT OR REPLACE INTO risk_meta(key, value) VALUES ('last_trade_at_by_token', ?)", JSON.stringify(state.lastTradeAtByToken));
 }
-function parseLimits(value: RiskPayload["limits"]): RiskLimits { return { maxTradeWei: BigInt(value.maxTradeWei), maxPortfolioExposureWei: BigInt(value.maxPortfolioExposureWei), maxTokenExposureWei: BigInt(value.maxTokenExposureWei), maxOpenPositions: value.maxOpenPositions, maxTradesPerDay: value.maxTradesPerDay, cooldownSeconds: value.cooldownSeconds, maxDailyLossWei: BigInt(value.maxDailyLossWei) }; }
-function parseTrade(value: RiskPayload["trade"]): TradeRequest { return { tokenIn: value.tokenIn, tokenOut: value.tokenOut, amountInWei: BigInt(value.amountInWei), amountOutWei: BigInt(value.amountOutWei), slippageBps: value.slippageBps, reason: value.reason, idempotencyKey: value.idempotencyKey }; }
-function parseContext(value: RiskPayload["context"]): TradeContext { return { currentExposureWei: BigInt(value.currentExposureWei), tokenExposureWei: BigInt(value.tokenExposureWei), openPositions: value.openPositions, nowMs: value.nowMs }; }
+function parseLimits(value: RiskPayload["limits"]): RiskLimits {
+  return {
+    maxTradeWei: requiredBigInt(value?.maxTradeWei, "limits.maxTradeWei"),
+    maxPortfolioExposureWei: requiredBigInt(value?.maxPortfolioExposureWei, "limits.maxPortfolioExposureWei"),
+    maxTokenExposureWei: requiredBigInt(value?.maxTokenExposureWei, "limits.maxTokenExposureWei"),
+    maxOpenPositions: value?.maxOpenPositions,
+    maxTradesPerDay: value?.maxTradesPerDay,
+    cooldownSeconds: value?.cooldownSeconds,
+    maxDailyLossWei: requiredBigInt(value?.maxDailyLossWei, "limits.maxDailyLossWei")
+  };
+}
+function parseTrade(value: RiskPayload["trade"]): TradeRequest {
+  return {
+    tokenIn: value?.tokenIn,
+    tokenOut: value?.tokenOut,
+    amountInWei: requiredBigInt(value?.amountInWei, "trade.amountInWei"),
+    amountOutWei: requiredBigInt(value?.amountOutWei, "trade.amountOutWei"),
+    slippageBps: value?.slippageBps,
+    reason: value?.reason,
+    idempotencyKey: value?.idempotencyKey
+  };
+}
+function parseContext(value: RiskPayload["context"]): TradeContext {
+  return {
+    currentExposureWei: requiredBigInt(value?.currentExposureWei, "context.currentExposureWei"),
+    tokenExposureWei: requiredBigInt(value?.tokenExposureWei, "context.tokenExposureWei"),
+    openPositions: value?.openPositions,
+    nowMs: value?.nowMs
+  };
+}
 
 export class RiskState {
   private readonly sql: SqlStorage;
@@ -42,19 +86,26 @@ export class RiskState {
       const body = await request.json() as { enabled: boolean }; state = { ...state, killSwitch: Boolean(body.enabled) }; writeState(this.sql, state); return Response.json({ ok: true, killSwitch: state.killSwitch });
     }
     if (url.pathname === "/authorize" && request.method === "POST") {
-      const payload = await request.json() as RiskPayload; const trade = parseTrade(payload);
-      const check = evaluateRisk(trade, parseLimits(payload.limits), state, parseContext(payload.context));
-      if (!check.ok) return Response.json({ ok: false, reason: check.reason }, { status: 409 });
-      if (trade.idempotencyKey) {
-        if (this.sql.exec("SELECT key FROM risk_idempotency WHERE key = ?", trade.idempotencyKey).one()) return Response.json({ ok: false, reason: "Duplicate idempotency key." }, { status: 409 });
-        this.sql.exec("INSERT INTO risk_idempotency(key, created_at) VALUES (?, ?)", trade.idempotencyKey, nowMs);
+      try {
+        const payload = await request.json() as RiskPayload;
+        const trade = parseTrade(payload.trade);
+        const limits = parseLimits(payload.limits);
+        const context = parseContext(payload.context);
+        const check = evaluateRisk(trade, limits, state, context);
+        if (!check.ok) return Response.json({ ok: false, reason: check.reason }, { status: 409 });
+        if (trade.idempotencyKey) {
+          if (this.sql.exec("SELECT key FROM risk_idempotency WHERE key = ?", trade.idempotencyKey).one()) return Response.json({ ok: false, reason: "Duplicate idempotency key." }, { status: 409 });
+          this.sql.exec("INSERT INTO risk_idempotency(key, created_at) VALUES (?, ?)", trade.idempotencyKey, nowMs);
+        }
+        const token = trade.tokenOut.toLowerCase(); state = { ...state, dailyTrades: state.dailyTrades + 1, lastTradeAtByToken: { ...state.lastTradeAtByToken, [token]: nowMs } }; writeState(this.sql, state);
+        return Response.json({ ok: true, state: { dailyTrades: state.dailyTrades } });
+      } catch (error) {
+        return Response.json({ ok: false, error: error instanceof Error ? error.message : "Risk authorization failed." }, { status: 400 });
       }
-      const token = trade.tokenOut.toLowerCase(); state = { ...state, dailyTrades: state.dailyTrades + 1, lastTradeAtByToken: { ...state.lastTradeAtByToken, [token]: nowMs } }; writeState(this.sql, state);
-      return Response.json({ ok: true, state: { dailyTrades: state.dailyTrades } });
     }
     if (url.pathname === "/settle" && request.method === "POST") {
       const body = await request.json() as { realizedPnlDeltaWei: string };
-      const delta = BigInt(body.realizedPnlDeltaWei);
+      const delta = requiredBigInt(body?.realizedPnlDeltaWei, "settle.realizedPnlDeltaWei");
       state = { ...state, dailyLossWei: delta < 0n ? state.dailyLossWei + (-delta) : state.dailyLossWei };
       writeState(this.sql, state);
       return Response.json({ ok: true, dailyLossWei: state.dailyLossWei.toString() });
