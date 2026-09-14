@@ -3,47 +3,26 @@ import type { CandidateScore } from "./engine";
 
 export type TradeDecision = "BUY" | "SELL" | "HOLD" | "SKIP";
 export type DecisionRisk = "LOW" | "MEDIUM" | "HIGH";
-
-export interface StrategyDecision {
-  decision: TradeDecision;
-  confidence: number;
-  risk: DecisionRisk;
-  reason: string;
-  suggestedSizeBps: number;
-}
-
+export interface StrategyDecision { decision: TradeDecision; confidence: number; risk: DecisionRisk; reason: string; suggestedSizeBps: number; }
 const allowedDecisions = new Set<TradeDecision>(["BUY", "SELL", "HOLD", "SKIP"]);
 const allowedRisks = new Set<DecisionRisk>(["LOW", "MEDIUM", "HIGH"]);
-
 function parseDecision(text: string): StrategyDecision {
   const raw = JSON.parse(text) as Partial<StrategyDecision>;
-
   if (!raw.decision || !allowedDecisions.has(raw.decision)) throw new Error("Gemini returned an invalid decision.");
   if (!raw.risk || !allowedRisks.has(raw.risk)) throw new Error("Gemini returned an invalid risk level.");
-  if (!Number.isFinite(raw.confidence) || (raw.confidence as number) < 0 || (raw.confidence as number) > 1) {
-    throw new Error("Gemini returned an invalid confidence value.");
-  }
-  if (!Number.isFinite(raw.suggestedSizeBps) || (raw.suggestedSizeBps as number) < 0 || (raw.suggestedSizeBps as number) > 10000) {
-    throw new Error("Gemini returned an invalid position size.");
-  }
-  if (typeof raw.reason !== "string" || raw.reason.length < 3 || raw.reason.length > 1000) {
-    throw new Error("Gemini returned an invalid rationale.");
-  }
-
-  return {
-    decision: raw.decision,
-    confidence: raw.confidence as number,
-    risk: raw.risk,
-    reason: raw.reason,
-    suggestedSizeBps: raw.suggestedSizeBps as number
-  };
+  if (!Number.isFinite(raw.confidence) || (raw.confidence as number) < 0 || (raw.confidence as number) > 1) throw new Error("Gemini returned an invalid confidence value.");
+  if (!Number.isFinite(raw.suggestedSizeBps) || (raw.suggestedSizeBps as number) < 0 || (raw.suggestedSizeBps as number) > 10000) throw new Error("Gemini returned an invalid position size.");
+  if (typeof raw.reason !== "string" || raw.reason.length < 3 || raw.reason.length > 1000) throw new Error("Gemini returned an invalid rationale.");
+  return { decision: raw.decision, confidence: raw.confidence as number, risk: raw.risk, reason: raw.reason, suggestedSizeBps: raw.suggestedSizeBps as number };
 }
 
-export async function analyzeCandidate(
-  candidate: CandidateScore,
-  geminiCandidates: GeminiCandidate[]
-): Promise<{ decision: StrategyDecision; provider: { role: string; model: string } }> {
-  const prompt = `You are Jarvis, a crypto trading decision assistant. Analyze ONLY the supplied market snapshot. Do not invent prices, liquidity, volume, momentum, news, or on-chain facts. Treat unavailable fields as unavailable. Never request calldata, wallet actions, or transaction parameters.
+export async function analyzeCandidate(candidate: CandidateScore, geminiCandidates: GeminiCandidate[]): Promise<{ decision: StrategyDecision; provider: { role: string; model: string } }> {
+  const market = candidate.market;
+  const prompt = `You are Jarvis, a disciplined Base-chain meme-coin trading decision assistant. Analyze ONLY the supplied market snapshot. Do not invent facts or assume a token is safe. Treat unavailable fields as unavailable.
+
+The scanner is inspired by discretionary meme-coin setups: accumulation/consolidation, a breakout or reclaim of recent resistance, rising short-term momentum, and an abnormal volume expansion. Prefer early, liquid setups over already-parabolic moves. A low-cap candidate is a smaller-liquidity token, not a guaranteed low market-cap token; market cap is not supplied.
+
+For BUY decisions, require a concrete trigger in the supplied data such as volume expansion plus positive short-term momentum and/or price pressing the recent high. Penalize extended 24h moves and weak liquidity. HOLD when the setup is interesting but the trigger is not confirmed. SKIP when liquidity/data quality/risk is poor.
 
 Return JSON only with exactly these fields:
 - decision: BUY | SELL | HOLD | SKIP
@@ -54,14 +33,20 @@ Return JSON only with exactly these fields:
 
 Market snapshot:
 ${JSON.stringify({
-  address: candidate.market.address,
-  symbol: candidate.market.symbol,
-  decimals: candidate.market.decimals,
-  priceUsd: candidate.market.priceUsd,
-  liquidityUsd: candidate.market.liquidityUsd,
-  volume24hUsd: candidate.market.volume24hUsd,
-  change24hPct: candidate.market.change24hPct,
-  dataCompleteness: candidate.market.dataCompleteness ?? "full",
+  address: market.address,
+  symbol: market.symbol,
+  decimals: market.decimals,
+  priceUsd: market.priceUsd,
+  liquidityUsd: market.liquidityUsd,
+  volume24hUsd: market.volume24hUsd,
+  volume1hUsd: market.volume1hUsd,
+  avgHourlyVolumeUsd: market.avgHourlyVolumeUsd,
+  volumeSpikeRatio: market.volumeSpikeRatio,
+  change1hPct: market.change1hPct,
+  change6hPct: market.change6hPct,
+  change24hPct: market.change24hPct,
+  nearRecentHighPct: market.nearRecentHighPct,
+  dataCompleteness: market.dataCompleteness ?? "full",
   scannerScore: candidate.score,
   scannerReasons: candidate.reasons
 })}`;
@@ -84,10 +69,6 @@ ${JSON.stringify({
       }
     }
   };
-
   const response = await generateWithFallbacks(geminiCandidates, request);
-  return {
-    decision: parseDecision(response.text),
-    provider: { role: response.role, model: response.model }
-  };
+  return { decision: parseDecision(response.text), provider: { role: response.role, model: response.model } };
 }
