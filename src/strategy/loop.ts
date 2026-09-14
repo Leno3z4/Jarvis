@@ -56,19 +56,26 @@ export async function evaluateMarkets(
     let quotedOut: bigint | undefined;
 
     if (executable && quoteProvider && quoteAmountInWei && candidate.market.address.toLowerCase() !== config.cashToken.toLowerCase()) {
-      const quote = await quoteProvider.getQuote({
-        tokenIn: decision.decision === "BUY" ? config.cashToken : candidate.market.address,
-        tokenOut: decision.decision === "BUY" ? candidate.market.address : config.cashToken,
-        amountInWei: quoteAmountInWei,
-        slippageBps
-      }).catch(() => null);
+      try {
+        const quote = await quoteProvider.getQuote({
+          tokenIn: decision.decision === "BUY" ? config.cashToken : candidate.market.address,
+          tokenOut: decision.decision === "BUY" ? candidate.market.address : config.cashToken,
+          amountInWei: quoteAmountInWei,
+          slippageBps
+        });
 
-      if (!quote || quote.amountOutWei <= 0n) {
+        if (quote.amountOutWei <= 0n) {
+          executable = false;
+          rejectionReason = "0x returned a zero output amount.";
+        } else {
+          quotedIn = quote.amountInWei;
+          quotedOut = quote.amountOutWei;
+        }
+      } catch (error) {
         executable = false;
-        rejectionReason = "No valid execution quote available.";
-      } else {
-        quotedIn = quote.amountInWei;
-        quotedOut = quote.amountOutWei;
+        rejectionReason = error instanceof Error
+          ? `Execution quote rejected: ${error.message}`
+          : "Execution quote rejected: unknown 0x error.";
       }
     } else if (executable && (!quoteProvider || !quoteAmountInWei)) {
       executable = false;
