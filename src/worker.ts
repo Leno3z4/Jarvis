@@ -155,11 +155,10 @@ async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
     throw new Error(`paper/authorizeRisk: ${error instanceof Error ? error.message : "unknown error"}`);
   }
   if (riskResponse) {
+    const riskBody = await riskResponse.json() as { reason?: string; error?: string };
     return {
       executed: false,
-      reason: (await riskResponse.json() as { reason?: string; error?: string }).reason
-        ?? (await Promise.resolve(riskResponse.clone().json()) as Promise<{ error?: string }>).then((body) => body.error ?? "Risk gate blocked trade.")
-        ?? "Risk gate blocked trade."
+      reason: riskBody.reason ?? riskBody.error ?? "Risk gate blocked trade."
     };
   }
 
