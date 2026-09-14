@@ -1,6 +1,4 @@
-import { UniswapTokenProvider } from "../market/uniswap";
 import { TheGraphMarketDataProvider } from "../market/thegraph";
-import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
 import type { GeminiCandidate } from "../ai/gemini";
 import type { TokenMarket } from "../market/types";
@@ -39,25 +37,16 @@ export async function runStrategyScan(config: {
     ? new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId)
     : undefined;
 
-  let discoveredTokens: TokenMarket[] = [];
-  if (graph) {
-    // Query low-cap tokens directly from The Graph instead of starting from
-    // Uniswap's volume/TVL leaderboards, which are dominated by large caps.
-    discoveredTokens = await graph.discoverLowCapMarkets(
-      config.strategy.lowCapMinLiquidityUsd,
-      config.strategy.lowCapMaxLiquidityUsd,
-      Math.min(Math.max(limit * 2, 40), 100)
-    );
-  }
-
-  if (discoveredTokens.length === 0) {
-    const uniswapApiKey = config.strategy.uniswapApiKey;
-    if (!uniswapApiKey) {
-      throw new Error("Uniswap API key is required for Base token discovery when The Graph low-cap discovery is unavailable.");
-    }
-    const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
-    discoveredTokens = await uniswap.discoverBaseTokenAddresses(limit, heldTokenAddresses);
-  }
+  // New entries come exclusively from the low-cap universe. Do not fall back
+  // to broad Uniswap volume/TVL leaderboards, because that defeats the low-cap
+  // requirement whenever The Graph has no qualifying results.
+  let discoveredTokens: TokenMarket[] = graph
+    ? await graph.discoverLowCapMarkets(
+        config.strategy.lowCapMinLiquidityUsd,
+        config.strategy.lowCapMaxLiquidityUsd,
+        Math.min(Math.max(limit * 2, 40), 100)
+      )
+    : [];
 
   const heldMarkets = heldTokenAddresses.map((address) => heldMarket(address));
   const unique = new Map<string, TokenMarket>();
@@ -66,12 +55,20 @@ export async function runStrategyScan(config: {
   }
   let markets = [...unique.values()];
 
-  if (graph && markets.length > 0) {
+  // No The Graph low-cap data means no new-entry universe. Existing held
+  // positions can still proceed to exit analysis.
+  if (markets.length === 0) return { opportunities: [], discovered: 0 };
+
+  if (graph && discoveredTokens.length > 0) {
     markets = await graph.enrichMarkets(markets);
   }
 
-  if (markets.length === 0) return { opportunities: [], discovered: 0 };
-  const quoteProvider = new ZeroExQuoteProvider(
+  if (discoveredTokens.length === 0 && heldMarkets.length > 0) {
+    // Held-only evaluation deliberately remains possible for exits.
+    markets = heldMarkets;
+  }
+
+  const quoteProvider = new (await import("../market/zeroex")).ZeroExQuoteProvider(
     config.zeroExApiKey,
     config.takerAddress,
     8453,
