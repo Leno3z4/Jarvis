@@ -3,6 +3,7 @@ import type { TokenMarket } from "./types";
 const DEFAULT_SUBGRAPH_ID = "GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz";
 const DEFAULT_TEST_TOKEN = "0x4200000000000000000000000000000000000006";
 const GATEWAY_BASE = "https://gateway.thegraph.com/api";
+const MAX_ENRICH_MARKETS = 20;
 
 interface GraphHourData { periodStartUnix?: number | string; volumeUSD?: string | number; priceUSD?: string | number; close?: string | number; }
 interface GraphToken { id?: string; symbol?: string; decimals?: string | number; totalValueLockedUSD?: string | number; derivedETH?: string | number; }
@@ -33,7 +34,9 @@ export class TheGraphMarketDataProvider {
 
   async enrichMarkets(markets: TokenMarket[]): Promise<TokenMarket[]> {
     if (!this.apiKey || markets.length === 0) return markets;
-    const limited = markets.slice(0, 10);
+    // Keep the enrichment universe large enough to discover new opportunities,
+    // but bounded so the Worker stays below its external-subrequest budget.
+    const limited = markets.slice(0, MAX_ENRICH_MARKETS);
     return Promise.all(limited.map(async (market) => {
       try {
         const query = `query TokenData($token: String!) {
