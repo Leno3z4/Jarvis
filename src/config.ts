@@ -47,8 +47,6 @@ export interface JarvisConfig {
   paperStartingCashWei: bigint;
   paperTakerAddress?: `0x${string}`;
   zeroExApiKey?: string;
-  theGraphApiKey?: string;
-  theGraphUniswapV3SubgraphId?: string;
   baseRpcUrl: string;
   liveWalletAddress?: `0x${string}`;
   livePrivateKey?: `0x${string}`;
@@ -61,6 +59,7 @@ export interface JarvisConfig {
     minLiquidityUsd: number; minVolume24hUsd: number; minChange24hPct: number; maxChange24hPct: number;
     minScore: number; maxCandidates: number; minGeminiConfidence: number; maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
     quoteAmountWei: bigint; slippageBps: number;
+    uniswapApiKey?: string; theGraphApiKey?: string; theGraphUniswapV3SubgraphId?: string;
   };
 }
 
@@ -89,8 +88,6 @@ export function getConfig(env: Env): JarvisConfig {
     paperStartingCashWei: BigInt(env.PAPER_STARTING_CASH_WEI ?? "1000000000000000000"),
     paperTakerAddress: env.PAPER_TAKER_ADDRESS,
     zeroExApiKey: env.ZEROEX_API_KEY,
-    theGraphApiKey: env.THE_GRAPH_API_KEY,
-    theGraphUniswapV3SubgraphId: env.THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID ?? DEFAULT_UNISWAP_V3_SUBGRAPH_ID,
     baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
     liveWalletAddress: env.LIVE_WALLET_ADDRESS,
     livePrivateKey: env.LIVE_PRIVATE_KEY,
@@ -100,12 +97,19 @@ export function getConfig(env: Env): JarvisConfig {
       primaryModel: env.GEMINI_MODEL ?? "gemini-3.6-flash", fallback1Model: env.GEMINI_MODEL_FALLBACK_1 ?? "gemini-3.6-flash", fallback2Model: env.GEMINI_MODEL_FALLBACK_2 ?? "gemini-3.5-flash-lite"
     },
     strategy: {
-      minLiquidityUsd: numberEnv(env.STRATEGY_MIN_LIQUIDITY_USD, 50_000), minVolume24hUsd: numberEnv(env.STRATEGY_MIN_VOLUME_USD, 10_000),
-      minChange24hPct: numberEnv(env.STRATEGY_MIN_CHANGE_PCT, 2), maxChange24hPct: numberEnv(env.STRATEGY_MAX_CHANGE_PCT, 50),
-      minScore: numberEnv(env.STRATEGY_MIN_SCORE, 60), maxCandidates: Math.max(1, intEnv(env.STRATEGY_MAX_CANDIDATES, 5)),
-      minGeminiConfidence: numberEnv(env.STRATEGY_MIN_CONFIDENCE, 0.70), maxGeminiRisk: env.STRATEGY_MAX_RISK ?? "MEDIUM",
+      minLiquidityUsd: numberEnv(env.STRATEGY_MIN_LIQUIDITY_USD, 50_000),
+      minVolume24hUsd: numberEnv(env.STRATEGY_MIN_VOLUME_USD, 10_000),
+      minChange24hPct: numberEnv(env.STRATEGY_MIN_CHANGE_PCT, 2),
+      maxChange24hPct: numberEnv(env.STRATEGY_MAX_CHANGE_PCT, 50),
+      minScore: numberEnv(env.STRATEGY_MIN_SCORE, 60),
+      maxCandidates: Math.max(1, intEnv(env.STRATEGY_MAX_CANDIDATES, 5)),
+      minGeminiConfidence: numberEnv(env.STRATEGY_MIN_CONFIDENCE, 0.70),
+      maxGeminiRisk: env.STRATEGY_MAX_RISK ?? "MEDIUM",
       quoteAmountWei: BigInt(env.STRATEGY_QUOTE_AMOUNT_WEI ?? "10000000000000000"),
-      slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100)))
+      slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100))),
+      uniswapApiKey: env.UNISWAP_API_KEY,
+      theGraphApiKey: env.THE_GRAPH_API_KEY,
+      theGraphUniswapV3SubgraphId: env.THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID ?? DEFAULT_UNISWAP_V3_SUBGRAPH_ID
     }
   };
 }
