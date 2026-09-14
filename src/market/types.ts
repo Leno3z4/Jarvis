@@ -1,6 +1,7 @@
 export interface TokenMarket {
   address: `0x${string}`;
   symbol: string;
+  name?: string;
   decimals: number;
   priceUsd: number;
   liquidityUsd: number;
