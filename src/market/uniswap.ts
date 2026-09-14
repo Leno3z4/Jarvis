@@ -53,17 +53,35 @@ function isErc20Address(value: string): boolean { const lower = value.toLowerCas
 function positiveBigInt(value: unknown): bigint { try { const parsed = BigInt(String(value ?? "0")); return parsed > 0n ? parsed : 0n; } catch { return 0n; } }
 function positiveNumber(value: unknown): number { const parsed = typeof value === "number" ? value : Number(value ?? 0); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; }
 
+function isTransientQuoteStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 async function quoteToken(apiKey: string, swapper: `0x${string}`, tokenIn: `0x${string}`, tokenOut: `0x${string}`, amount: bigint): Promise<bigint> {
-  const response = await fetch(QUOTE_API_URL, {
-    method: "POST",
-    headers: { "x-api-key": apiKey, accept: "application/json", "content-type": "application/json", "x-universal-router-version": "2.0", "x-erc20eth-enabled": "false", "x-permit2-disabled": "false" },
-    body: JSON.stringify({ type: "EXACT_INPUT", amount: amount.toString(), tokenInChainId: CHAIN_ID, tokenOutChainId: CHAIN_ID, tokenIn, tokenOut, swapper, slippageTolerance: 0.5, routingPreference: "BEST_PRICE", protocols: ["V2", "V3", "V4"] })
-  });
-  if (!response.ok) { const body = await response.text(); throw new Error(`Uniswap quote failed (${response.status}): ${body.slice(0, 220)}`); }
-  const data = (await response.json()) as QuotePayload;
-  const output = positiveBigInt(data.quote?.output?.amount ?? data.quote?.outputs?.[0]?.amount);
-  if (output <= 0n) throw new Error("Uniswap quote returned no positive output.");
-  return output;
+  const attempts = 3;
+  let lastError = "unknown error";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await fetch(QUOTE_API_URL, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, accept: "application/json", "content-type": "application/json", "x-universal-router-version": "2.0", "x-erc20eth-enabled": "false", "x-permit2-disabled": "false" },
+      body: JSON.stringify({ type: "EXACT_INPUT", amount: amount.toString(), tokenInChainId: CHAIN_ID, tokenOutChainId: CHAIN_ID, tokenIn, tokenOut, swapper, slippageTolerance: 0.5, routingPreference: "BEST_PRICE", protocols: ["V2", "V3", "V4"] })
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as QuotePayload;
+      const output = positiveBigInt(data.quote?.output?.amount ?? data.quote?.outputs?.[0]?.amount);
+      if (output <= 0n) throw new Error("Uniswap quote returned no positive output.");
+      return output;
+    }
+
+    const body = await response.text();
+    lastError = `Uniswap quote failed (${response.status}): ${body.slice(0, 220)}`;
+    if (!isTransientQuoteStatus(response.status) && response.status !== 404) throw new Error(lastError);
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+  }
+
+  throw new Error(lastError);
 }
 
 async function poolInfo(apiKey: string, token: `0x${string}`, quoteTokenAddress: `0x${string}`, protocol: (typeof POOL_PROTOCOLS)[number], fee?: number, tickSpacing?: number): Promise<PoolInfo[]> {
