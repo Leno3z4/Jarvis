@@ -2,6 +2,7 @@ import legacy from "./index";
 import { TradingBotState } from "./state/bot-state";
 import { RiskState } from "./state/risk-state";
 import { getConfig, type Env } from "./config";
+import { TheGraphMarketDataProvider } from "./market/thegraph";
 import { evaluateAutomation } from "./strategy/automation";
 import { validateTrade } from "./trading/risk";
 import type { TradeRequest } from "./trading/types";
@@ -228,6 +229,14 @@ export default {
           theGraphConfigured: Boolean(config.theGraphApiKey)
         }
       });
+    }
+
+    if (url.pathname === "/diagnostics/graph" && request.method === "GET") {
+      const provider = new TheGraphMarketDataProvider(
+        config.theGraphApiKey ?? "",
+        config.theGraphUniswapV3SubgraphId
+      );
+      return json(await provider.diagnose());
     }
 
     if (
