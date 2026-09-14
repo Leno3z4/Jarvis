@@ -9,7 +9,13 @@ const BASE_WETH = "0x4200000000000000000000000000000000000006" as `0x${string}`;
 const NATIVE_SENTINEL = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const DISCOVERY_WETH_AMOUNT_WEI = 1_000_000_000_000_000n;
-const POOL_PROTOCOLS = ["V3", "V2", "V4"] as const;
+const V3_FEE_TIERS = [
+  { fee: 100, tickSpacing: 1 },
+  { fee: 500, tickSpacing: 10 },
+  { fee: 3000, tickSpacing: 60 },
+  { fee: 10000, tickSpacing: 200 }
+] as const;
+const POOL_PROTOCOLS = ["V2", "V3", "V4"] as const;
 
 interface UniswapToken { name?: string; address?: string; chainId?: string | number; symbol?: string; decimals?: string | number; }
 interface UniswapResponse { tokens?: UniswapToken[]; }
@@ -37,13 +43,23 @@ async function quoteToken(apiKey: string, swapper: `0x${string}`, tokenIn: `0x${
   return output;
 }
 
-async function poolInfo(apiKey: string, token: `0x${string}`, quoteTokenAddress: `0x${string}`, protocol: (typeof POOL_PROTOCOLS)[number]): Promise<PoolInfo[]> {
+async function poolInfo(apiKey: string, token: `0x${string}`, quoteTokenAddress: `0x${string}`, protocol: (typeof POOL_PROTOCOLS)[number], fee?: number, tickSpacing?: number): Promise<PoolInfo[]> {
   if (token.toLowerCase() === quoteTokenAddress.toLowerCase()) return [];
   const [tokenAddressA, tokenAddressB] = [token, quoteTokenAddress].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const poolParameters: Record<string, string | number> = { tokenAddressA, tokenAddressB };
+  if (protocol === "V3") {
+    if (fee === undefined) throw new Error("V3 pool lookup requires fee.");
+    poolParameters.fee = fee;
+  }
+  if (protocol === "V4") {
+    if (fee === undefined || tickSpacing === undefined) throw new Error("V4 pool lookup requires fee and tickSpacing.");
+    poolParameters.fee = fee;
+    poolParameters.tickSpacing = tickSpacing;
+  }
   const response = await fetch(POOL_API_URL, {
     method: "POST",
     headers: { "x-api-key": apiKey, accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({ protocol, chainId: CHAIN_ID, poolParameters: { tokenAddressA, tokenAddressB }, pageSize: 20, currentPage: 1 })
+    body: JSON.stringify({ protocol, chainId: CHAIN_ID, poolParameters, pageSize: 20, currentPage: 1 })
   });
   if (!response.ok) { const body = await response.text(); throw new Error(`Uniswap ${protocol} pool lookup failed (${response.status}): ${body.slice(0, 180)}`); }
   const data = (await response.json()) as PoolResponse;
@@ -106,16 +122,27 @@ export class UniswapTokenProvider {
     for (const token of tokens) {
       if (!token.address) continue;
       const poolCandidates: TokenMarket[] = [];
-      for (const quote of [BASE_USDC, BASE_WETH] as const) {
-        for (const protocol of POOL_PROTOCOLS) {
+      try {
+        for (const feeTier of V3_FEE_TIERS) {
+          const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, BASE_USDC, "V3", feeTier.fee, feeTier.tickSpacing);
+          for (const pool of pools) {
+            const market = marketFromPool(token, pool, BASE_USDC, wethPriceUsd);
+            if (market) poolCandidates.push(market);
+          }
+        }
+      } catch (error) {
+        failures.push(`${token.symbol}:V3:USDC:${error instanceof Error ? error.message : "unknown"}`);
+      }
+      if (poolCandidates.length === 0) {
+        for (const feeTier of V3_FEE_TIERS) {
           try {
-            const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, quote, protocol);
+            const pools = await poolInfo(this.apiKey, token.address as `0x${string}`, BASE_WETH, "V3", feeTier.fee, feeTier.tickSpacing);
             for (const pool of pools) {
-              const market = marketFromPool(token, pool, quote, wethPriceUsd);
+              const market = marketFromPool(token, pool, BASE_WETH, wethPriceUsd);
               if (market) poolCandidates.push(market);
             }
           } catch (error) {
-            failures.push(`${token.symbol}:${protocol}:${quote === BASE_USDC ? "USDC" : "WETH"}:${error instanceof Error ? error.message : "unknown"}`);
+            failures.push(`${token.symbol}:V3:WETH:${feeTier.fee}:${error instanceof Error ? error.message : "unknown"}`);
           }
         }
       }
