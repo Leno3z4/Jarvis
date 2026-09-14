@@ -22,12 +22,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "BOT_STATE", "class_name": "TradingBotState" },
-      { "name": "RISK_STATE", "class_name": "RiskState" }
+      { "name": "RISK_STATE", "class_name": "RiskState" },
+      { "name": "LIVE_STATE", "class_name": "LiveTradingState" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["TradingBotState"] },
-    { "tag": "v2", "new_sqlite_classes": ["RiskState"] }
+    { "tag": "v2", "new_sqlite_classes": ["RiskState"] },
+    { "tag": "v3", "new_sqlite_classes": ["LiveTradingState"] }
   ],
   "triggers": { "crons": ["*/5 * * * *"] }
 }
