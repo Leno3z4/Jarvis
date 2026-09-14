@@ -14,11 +14,13 @@ export interface RiskCheckResult {
   reason?: string;
 }
 
-export function validateTrade(request: TradeRequest, limits: RiskLimits): string | null {
+export function validateTrade(request: TradeRequest, limits: RiskLimits, cashToken?: `0x${string}`): string | null {
   if (!ADDRESS_RE.test(request.tokenIn) || !ADDRESS_RE.test(request.tokenOut)) return "tokenIn and tokenOut must be valid EVM addresses.";
   if (request.tokenIn.toLowerCase() === request.tokenOut.toLowerCase()) return "tokenIn and tokenOut must be different.";
   if (request.amountInWei <= 0n || request.amountOutWei <= 0n) return "Trade amounts must be positive.";
-  if (request.amountInWei > limits.maxTradeWei) return "Trade exceeds max trade size.";
+  const isSell = cashToken !== undefined && request.tokenOut.toLowerCase() === cashToken.toLowerCase();
+  const riskAmountWei = isSell ? request.amountOutWei : request.amountInWei;
+  if (riskAmountWei > limits.maxTradeWei) return "Trade exceeds max trade size.";
   if (request.slippageBps < 1 || request.slippageBps > 500) return "Slippage must be between 1 and 500 bps.";
   return null;
 }
@@ -30,7 +32,7 @@ export function evaluateRisk(
   context: TradeContext,
   cashToken: `0x${string}`
 ): RiskCheckResult {
-  const basic = validateTrade(request, limits);
+  const basic = validateTrade(request, limits, cashToken);
   if (basic) return { ok: false, reason: basic };
   if (state.killSwitch) return { ok: false, reason: "Kill switch is active." };
   if (state.dailyLossWei >= limits.maxDailyLossWei) return { ok: false, reason: "Daily loss limit reached." };
