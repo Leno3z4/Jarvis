@@ -5,7 +5,9 @@ const BASE_NETWORK = "base";
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const NON_TARGET = new Set(["ETH","WETH","STETH","WSTETH","RETH","WEETH","CBETH","METH","OETH","FRXETH","SFRXETH","EETH","WRSETH","ANKRETH","WBTC","BTC","XBTC","USDC","USDT","DAI","USDBC","USDE","USDS","CBUSD"]);
 const NON_MEME = ["wrapped","staked","restaked","liquid staking","yield","vault","index","governance","oracle","exchange","router","bridge","infrastructure","synthetic","stablecoin","ethereum","bitcoin","chainlink","aave","uniswap","compound","lido","rocket pool","maker","curve"];
-const MEME = ["pepe","doge","shib","floki","bonk","brett","mog","wojak","degen","turbo","toshi","bobo","andy","ponke","neiro","mfer","meme","inu","dog","cat","frog","ape","monkey","penguin","chad","giga","ladys","normie","keycat","npc","higher","keyboard","hamster","goat","panda","bear","bull","duck","mouse","rat","capy","pug","shit","clown","based","blob","ninja","wolf","ski","mochi","bald","tybg","doginme","aerobud","spx"];
+const MEME = [
+  "pepe","doge","shib","floki","bonk","brett","mog","wojak","degen","turbo","toshi","bobo","andy","ponke","neiro","mfer","meme","inu","dog","cat","frog","ape","monkey","penguin","chad","giga","ladys","normie","keycat","npc","higher","keyboard","hamster","goat","panda","bear","bull","duck","mouse","rat","capy","pug","shit","clown","based","blob","ninja","wolf","ski","mochi","bald","tybg","doginme","aerobud","spx","mister","harold","harambe","wojak","smurf","corgi","shark","seal","frog","banana","pizza","fish","trump","maga","elon","grok","kek","cult","degen","higher","chog","tate","simpsons"
+];
 
 interface DexPair {
   chainId?: string;
@@ -56,7 +58,8 @@ function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
     volumeSpikeRatio: avgHourlyVolumeUsd > 0 ? volume1hUsd / avgHourlyVolumeUsd : 0,
     change1hPct,
     change6hPct,
-    nearRecentHighPct: Math.max(0, Math.min(105, 100 + change1hPct)),
+    // DexScreener does not provide a recent-high series here; leave this unset
+    // rather than deriving a misleading "near recent high" signal from 1h change.
     dataCompleteness: priceUsd > 0 && liquidityUsd > 0 && volume24hUsd > 0 ? "full" : "liquidity-price-only"
   };
 }
@@ -112,7 +115,12 @@ export class DexScreenerMarketProvider implements MarketProvider {
       pairs.push(...(profilePairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
     }
 
-    const terms = ["meme","pepe","doge","dog","cat","frog","ape","brett","mog","degen","toshi","based","chad","bonk","inu"];
+    // Search many Base meme/narrative terms so discovery is not dominated by only
+    // the handful of memes returned by one generic query. Keep this under the
+    // Worker subrequest budget while still covering emerging meme vocabulary.
+    const terms = [
+      "base","meme","pepe","doge","dog","cat","frog","ape","monkey","brett","mog","degen","toshi","based","chad","bonk","inu","wojak","mfer","higher","keycat","normie","npc","bobo","andy","ponke","neiro","floki","turbo","ninja"
+    ];
     const searchResults = await Promise.all(terms.map((term) => json<DexResponse>(`${API_BASE}/latest/dex/search?q=${encodeURIComponent(term)}`)));
     for (const result of searchResults) pairs.push(...(result?.pairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
 
@@ -130,6 +138,14 @@ export class DexScreenerMarketProvider implements MarketProvider {
       if (!old || liquidity > num(old.liquidity?.usd) || volume24h > num(old.volume?.h24)) best.set(key, pair);
     }
 
-    return [...best.values()].map((pair) => marketFromPair(pair, pair.baseToken!.address as `0x${string}`)).filter((m) => m.dataCompleteness === "full").sort((a, b) => ((b.change1hPct ?? 0) * 3 + (b.change6hPct ?? 0) * 2 + b.change24hPct) - ((a.change1hPct ?? 0) * 3 + (a.change6hPct ?? 0) * 2 + a.change24hPct) || b.volume24hUsd - a.volume24hUsd).slice(0, Math.min(Math.max(limit, 1), 100));
+    return [...best.values()]
+      .map((pair) => marketFromPair(pair, pair.baseToken!.address as `0x${string}`))
+      .filter((market) => market.dataCompleteness === "full")
+      .sort((a, b) => (
+        ((b.change1hPct ?? 0) * 3) + ((b.change6hPct ?? 0) * 2) + b.change24hPct + Math.min(b.volume24hUsd / Math.max(b.liquidityUsd, 1), 3) * 5
+      ) - (
+        ((a.change1hPct ?? 0) * 3) + ((a.change6hPct ?? 0) * 2) + a.change24hPct + Math.min(a.volume24hUsd / Math.max(a.liquidityUsd, 1), 3) * 5
+      ) || b.volume24hUsd - a.volume24hUsd)
+      .slice(0, Math.min(Math.max(limit, 1), 100));
   }
 }
