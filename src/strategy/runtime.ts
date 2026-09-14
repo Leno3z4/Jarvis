@@ -11,42 +11,21 @@ export async function runStrategyScan(config: {
   takerAddress?: `0x${string}`;
   limit?: number;
 }): Promise<{ opportunities: StrategyOpportunity[]; discovered: number }> {
-  if (!config.zeroExApiKey || !config.takerAddress) {
-    throw new Error("0x API key and taker address are required for strategy evaluation.");
-  }
+  if (!config.zeroExApiKey || !config.takerAddress) throw new Error("0x API key and taker address are required for strategy evaluation.");
   const uniswapApiKey = config.strategy.uniswapApiKey;
-  if (!uniswapApiKey) {
-    throw new Error("Uniswap API key is required for Base token discovery.");
-  }
+  if (!uniswapApiKey) throw new Error("Uniswap API key is required for Base token discovery.");
 
-  const limit = Math.min(config.limit ?? 5, 5);
+  const limit = Math.min(Math.max(config.limit ?? 20, 10), 30);
   const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
   let markets = await uniswap.discoverBaseMarkets(limit);
 
   if (config.strategy.theGraphApiKey) {
-    const graph = new TheGraphMarketDataProvider(
-      config.strategy.theGraphApiKey,
-      config.strategy.theGraphUniswapV3SubgraphId
-    );
+    const graph = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId);
     markets = await graph.enrichMarkets(markets);
   }
 
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
-
-  const quoteProvider = new ZeroExQuoteProvider(
-    config.zeroExApiKey,
-    config.takerAddress,
-    8453,
-    !config.strategy.allowQuoteBalanceIssues
-  );
-  const opportunities = await evaluateMarkets(
-    markets,
-    config.gemini,
-    config.strategy,
-    quoteProvider,
-    config.strategy.quoteAmountWei,
-    config.strategy.slippageBps
-  );
-
+  const quoteProvider = new ZeroExQuoteProvider(config.zeroExApiKey, config.takerAddress, 8453, !config.strategy.allowQuoteBalanceIssues);
+  const opportunities = await evaluateMarkets(markets, config.gemini, config.strategy, quoteProvider, config.strategy.quoteAmountWei, config.strategy.slippageBps);
   return { opportunities, discovered: markets.length };
 }
