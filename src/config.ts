@@ -10,6 +10,7 @@ export interface Env {
   TRADE_COOLDOWN_SECONDS?: string;
   MAX_DAILY_LOSS_WEI?: string;
   PAPER_CASH_TOKEN?: `0x${string}`;
+  LIVE_CASH_TOKEN?: `0x${string}`;
   PAPER_STARTING_CASH_WEI?: string;
   PAPER_TAKER_ADDRESS?: `0x${string}`;
   ZEROEX_API_KEY?: string;
@@ -42,12 +43,14 @@ export interface Env {
   STRATEGY_LOW_CAP_MIN_VOLUME_LIQUIDITY?: string;
   BOT_STATE: DurableObjectNamespace;
   RISK_STATE: DurableObjectNamespace;
+  LIVE_STATE: DurableObjectNamespace;
 }
 
 export interface JarvisConfig {
   mode: TradingMode;
   risk: RiskLimits;
   paperCashToken: `0x${string}`;
+  liveCashToken: `0x${string}`;
   paperStartingCashWei: bigint;
   paperTakerAddress?: `0x${string}`;
   zeroExApiKey?: string;
@@ -77,6 +80,7 @@ function resolveSecret(env: Env, key: "THE_GRAPH_API_KEY"): { value?: string; so
 export function getConfig(env: Env): JarvisConfig {
   const mode = env.TRADING_MODE === "live" ? "live" : "paper";
   const graphSecret = resolveSecret(env, "THE_GRAPH_API_KEY");
+  const paperCashToken = env.PAPER_CASH_TOKEN ?? DEFAULT_PAPER_CASH_TOKEN;
   return {
     mode,
     risk: {
@@ -85,7 +89,8 @@ export function getConfig(env: Env): JarvisConfig {
       maxTokenExposureWei: bigintEnv(env.MAX_TOKEN_EXPOSURE_WEI, 200000000000000000n, "MAX_TOKEN_EXPOSURE_WEI"),
       maxOpenPositions: Math.max(1, intEnv(env.MAX_OPEN_POSITIONS, 5)), maxTradesPerDay: Math.max(1, intEnv(env.MAX_TRADES_PER_DAY, 24)), cooldownSeconds: intEnv(env.TRADE_COOLDOWN_SECONDS, 900), maxDailyLossWei: bigintEnv(env.MAX_DAILY_LOSS_WEI, 100000000000000000n, "MAX_DAILY_LOSS_WEI")
     },
-    paperCashToken: env.PAPER_CASH_TOKEN ?? DEFAULT_PAPER_CASH_TOKEN,
+    paperCashToken,
+    liveCashToken: env.LIVE_CASH_TOKEN ?? paperCashToken,
     paperStartingCashWei: bigintEnv(env.PAPER_STARTING_CASH_WEI, 1000000000000000000n, "PAPER_STARTING_CASH_WEI"),
     paperTakerAddress: env.PAPER_TAKER_ADDRESS, zeroExApiKey: env.ZEROEX_API_KEY, baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
     liveWalletAddress: env.LIVE_WALLET_ADDRESS, livePrivateKey: env.LIVE_PRIVATE_KEY, liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
