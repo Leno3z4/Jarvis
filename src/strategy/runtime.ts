@@ -15,7 +15,7 @@ export async function runStrategyScan(config: {
   const uniswapApiKey = config.strategy.uniswapApiKey;
   if (!uniswapApiKey) throw new Error("Uniswap API key is required for Base token discovery.");
 
-  const limit = Math.min(Math.max(config.limit ?? 20, 10), 10);
+  const limit = Math.min(Math.max(config.limit ?? 20, 20), 30);
   const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
   const heldTokenAddresses = Object.entries(config.strategy.heldPositions ?? {})
     .filter(([, amount]) => amount !== "0")
