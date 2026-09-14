@@ -30,13 +30,15 @@ const MEME_NAME_TERMS = [
   "turbo", "toshi", "bobo", "andy", "ponke", "neiro", "mfer", "meme", "inu",
   "dog", "cat", "frog", "ape", "monkey", "penguin", "chad", "giga", "ladys",
   "normie", "keycat", "npc", "higher", "keyboard", "hamster", "goat", "panda",
-  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown"
+  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown",
+  "ski", "mochi", "bald", "tybg", "blob", "based", "aerobud", "wolf", "mister",
+  "spx", "ninja", "chog", "higher", "doginme"
 ];
 
 const NON_MEME_TERMS = [
   "wrapped", "staked", "restaked", "liquid staking", "yield", "vault", "index",
   "governance", "oracle", "exchange", "router", "bridge", "infrastructure", "synthetic",
-  "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
+  "stablecoin", "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
   "compound", "lido", "rocket pool", "maker", "curve"
 ];
 
@@ -150,7 +152,10 @@ export class TheGraphMarketDataProvider {
 
   async discoverLowCapMarkets(minLiquidityUsd: number, maxLiquidityUsd: number, limit = 100): Promise<TokenMarket[]> {
     if (!this.apiKey || minLiquidityUsd <= 0 || maxLiquidityUsd < minLiquidityUsd) return [];
-    const first = Math.min(Math.max(Math.floor(limit), 1), 100);
+    // Always inspect the widest permitted low-cap slice before meme classification.
+    // Filtering the Graph result to meme names inside the query would bias discovery
+    // toward only the most liquid/visible meme names and miss smaller emerging memes.
+    const first = 100;
     const query = `query LowCapTokens($first: Int!, $minLiquidity: BigDecimal!, $maxLiquidity: BigDecimal!) {
       tokens(
         first: $first
@@ -193,6 +198,8 @@ export class TheGraphMarketDataProvider {
           typeof token.id === "string" && ADDRESS_RE.test(token.id) && !isNonTargetSymbol(token.symbol ?? "UNKNOWN")
         )
         .filter((token) => isLikelyMemeToken(token.name, token.symbol))
+        .sort((a, b) => numeric(b.volumeUSD) - numeric(a.volumeUSD))
+        .slice(0, Math.min(Math.max(Math.floor(limit), 1), 100))
         .map((token) => ({
           address: token.id as `0x${string}`,
           symbol: token.symbol ?? "UNKNOWN",
