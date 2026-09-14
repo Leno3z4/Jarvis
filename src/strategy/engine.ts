@@ -76,56 +76,31 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const lowCapMinLiquidity = config.lowCapMinLiquidityUsd ?? 10_000;
   const lowCapMaxLiquidity = config.lowCapMaxLiquidityUsd ?? 250_000;
   const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 1_500;
-  const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.04;
   const nonTargetAsset = isNonTargetAsset(market.symbol);
   const memeToken = isMemeToken(market);
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
     && market.liquidityUsd <= lowCapMaxLiquidity
     && market.volume24hUsd >= lowCapMinVolume
-    && market.liquidityUsd > 0
-    && market.volume24hUsd / market.liquidityUsd >= lowCapVolumeRatio;
+    && market.liquidityUsd > 0;
 
   if (nonTargetAsset) reasons.push("non-target settlement/blue-chip asset");
-  if (memeToken) {
-    score += 20;
-    reasons.push("meme-token identity");
-  } else {
-    reasons.push("not identified as a meme token");
-  }
+  if (memeToken) { score += 20; reasons.push("meme-token identity"); }
+  else reasons.push("not identified as a meme token");
 
   if (market.dataCompleteness === "quote-only") {
     reasons.push("market data incomplete");
   } else {
-    if (isLowCapCandidate) {
-      score += 25;
-      reasons.push("low-cap liquidity tier");
-    } else {
-      reasons.push("outside low-cap liquidity band");
-    }
+    if (isLowCapCandidate) { score += 25; reasons.push("low-cap liquidity tier"); }
+    else reasons.push("outside low-cap liquidity band");
 
-    if (market.volume24hUsd >= config.minVolume24hUsd) {
-      score += 25;
-      reasons.push("sufficient 24h volume");
-    } else if (isLowCapCandidate && market.volume24hUsd >= lowCapMinVolume) {
-      score += 15;
-      reasons.push("active low-cap volume");
-    } else {
-      reasons.push("volume below low-cap floor");
-    }
+    if (market.volume24hUsd >= config.minVolume24hUsd) { score += 25; reasons.push("sufficient 24h volume"); }
+    else if (isLowCapCandidate && market.volume24hUsd >= lowCapMinVolume) { score += 15; reasons.push("active low-cap volume"); }
+    else reasons.push("volume below low-cap floor");
 
-    if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) {
-      score += 25;
-      reasons.push("positive momentum");
-    } else if (isLowCapCandidate && market.change24hPct >= 0 && market.change24hPct < config.minChange24hPct) {
-      score += 10;
-      reasons.push("early low-cap momentum");
-    } else if (market.change24hPct < 0) {
-      score -= 10;
-      reasons.push("negative momentum");
-    } else if (market.change24hPct > config.maxChange24hPct) {
-      score -= 25;
-      reasons.push("momentum too extended");
-    }
+    if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) { score += 25; reasons.push("positive 24h momentum"); }
+    else if (isLowCapCandidate && market.change24hPct >= 0 && market.change24hPct < config.minChange24hPct) { score += 10; reasons.push("early low-cap momentum"); }
+    else if (market.change24hPct < 0) { score -= 10; reasons.push("negative 24h momentum"); }
+    else if (market.change24hPct > config.maxChange24hPct) { score -= 25; reasons.push("momentum too extended"); }
   }
 
   const staleMs = Date.now() - market.observedAt;
@@ -136,23 +111,13 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   if (hasValidPrice) { score += 10; reasons.push("valid price"); }
   else reasons.push("price unavailable");
 
-  if (market.volumeSpikeRatio !== undefined && market.volumeSpikeRatio >= 2) {
-    score += 10;
-    reasons.push("volume spike vs hourly baseline");
-  }
-  if (market.change6hPct !== undefined && market.change6hPct >= 3 && market.change6hPct <= 30) {
-    score += 8;
-    reasons.push("healthy 6h impulse");
-  }
-  if (market.change1hPct !== undefined && market.change1hPct >= 0.5 && market.change1hPct <= 12) {
-    score += 5;
-    reasons.push("positive short-term impulse");
-  }
-  if (market.nearRecentHighPct !== undefined && market.nearRecentHighPct >= 97) {
-    score += 7;
-    reasons.push("pressing recent high");
-  }
-  if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
+  if (market.volumeSpikeRatio !== undefined && market.volumeSpikeRatio >= 1.25) { score += 10; reasons.push("above-baseline hourly volume"); }
+  if (market.volumeSpikeRatio !== undefined && market.volumeSpikeRatio >= 2) { score += 5; reasons.push("strong volume expansion"); }
+  if (market.change6hPct !== undefined && market.change6hPct >= 2 && market.change6hPct <= 30) { score += 10; reasons.push("healthy 6h momentum"); }
+  if (market.change1hPct !== undefined && market.change1hPct >= 0.3 && market.change1hPct <= 12) { score += 10; reasons.push("positive 1h momentum"); }
+  if (market.change1hPct !== undefined && market.change1hPct >= -1 && market.change6hPct !== undefined && market.change6hPct >= 0) { score += 4; reasons.push("controlled short-term pullback"); }
+  if (market.nearRecentHighPct !== undefined && market.nearRecentHighPct >= 97) { score += 7; reasons.push("pressing recent high"); }
+  if (isLowCapCandidate) reasons.push("low-cap meme candidate");
 
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
@@ -161,14 +126,11 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     && hasValidPrice
     && staleMs <= 60_000
     && market.change24hPct <= config.maxChange24hPct
-    && score >= 45;
+    && score >= 35;
 
   return { market, score, reasons, eligible: lowCapEligible };
 }
 
 export function scanMarkets(markets: TokenMarket[], config: StrategyConfig = DEFAULT_CONFIG): CandidateScore[] {
-  return markets
-    .map((market) => scoreMarket(market, config))
-    .filter((candidate) => candidate.eligible)
-    .sort((a, b) => b.score - a.score);
+  return markets.map((market) => scoreMarket(market, config)).filter((candidate) => candidate.eligible).sort((a, b) => b.score - a.score);
 }
