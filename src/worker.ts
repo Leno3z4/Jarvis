@@ -18,65 +18,16 @@ async function getPaperPortfolio(env: Env, config: ReturnType<typeof getConfig>)
   if (!response.ok) throw new Error("Portfolio state unavailable.");
   return response.json() as Promise<{ cashWei: string; positions: Record<string, string>; costBasisWei?: Record<string, string>; realizedPnlWei: string }>;
 }
-async function getPaperTrades(env: Env) {
-  const response = await stateStub(env).fetch("https://jarvis.internal/trades?limit=500");
-  if (!response.ok) throw new Error("Trade history unavailable.");
-  return response.json() as Promise<{ trades: Array<{ tokenIn: string; tokenOut: string; amountInWei: string; amountOutWei: string }> }>;
-}
-function deriveExposureFromTrades(
-  trades: Array<{ tokenIn: string; tokenOut: string; amountInWei: string; amountOutWei: string }>,
-  cashToken: `0x${string}`,
-  positions: Record<string, string>
-) {
-  const cashKey = cashToken.toLowerCase();
-  const held: Record<string, bigint> = {};
-  const basis: Record<string, bigint> = {};
-  for (const row of trades) {
-    const tokenIn = row.tokenIn.toLowerCase();
-    const tokenOut = row.tokenOut.toLowerCase();
-    const amountIn = BigInt(row.amountInWei);
-    const amountOut = BigInt(row.amountOutWei);
-    if (tokenIn === cashKey && tokenOut !== cashKey) {
-      held[tokenOut] = (held[tokenOut] ?? 0n) + amountOut;
-      basis[tokenOut] = (basis[tokenOut] ?? 0n) + amountIn;
-      continue;
-    }
-    if (tokenOut === cashKey && tokenIn !== cashKey) {
-      const currentHeld = held[tokenIn] ?? 0n;
-      const currentBasis = basis[tokenIn] ?? 0n;
-      const soldBasis = currentHeld > 0n ? (currentBasis * amountIn) / currentHeld : 0n;
-      const remaining = currentHeld > amountIn ? currentHeld - amountIn : 0n;
-      const remainingBasis = currentBasis > soldBasis ? currentBasis - soldBasis : 0n;
-      if (remaining === 0n) {
-        delete held[tokenIn];
-        delete basis[tokenIn];
-      } else {
-        held[tokenIn] = remaining;
-        basis[tokenIn] = remainingBasis;
-      }
-    }
-  }
-  const tokenExposureByToken: Record<string, bigint> = {};
-  let totalExposure = 0n;
-  for (const [token, amountText] of Object.entries(positions)) {
-    const amount = BigInt(amountText);
-    if (amount <= 0n) continue;
-    const reconstructedAmount = held[token] ?? 0n;
-    const reconstructedBasis = basis[token] ?? 0n;
-    if (reconstructedAmount === amount && reconstructedBasis > 0n) {
-      tokenExposureByToken[token] = reconstructedBasis;
-      totalExposure += reconstructedBasis;
-    }
-  }
-  return { totalExposure, tokenExposureByToken };
-}
 async function authorizePaperTrade(env: Env, config: ReturnType<typeof getConfig>, trade: TradeRequest): Promise<Response | null> {
   const portfolio = await getPaperPortfolio(env, config);
-  const history = await getPaperTrades(env);
-  const derived = deriveExposureFromTrades(history.trades, config.paperCashToken, portfolio.positions);
+  const costBasis = portfolio.costBasisWei ?? {};
+  const exposure = Object.values(costBasis).reduce((sum, value) => sum + BigInt(value), 0n);
   const isBuy = trade.tokenIn.toLowerCase() === config.paperCashToken.toLowerCase();
+  if (isBuy && BigInt(portfolio.cashWei) < trade.amountInWei) {
+    return json({ ok: false, reason: `Insufficient paper cash: have ${portfolio.cashWei}, need ${trade.amountInWei}.` }, { status: 409 });
+  }
   const riskToken = (isBuy ? trade.tokenOut : trade.tokenIn).toLowerCase();
-  const tokenExposure = derived.tokenExposureByToken[riskToken] ?? 0n;
+  const tokenExposure = BigInt(costBasis[riskToken] ?? "0");
   const limits = config.risk;
   const response = await riskStub(env).fetch(new Request("https://jarvis-risk/authorize", {
     method: "POST",
@@ -84,12 +35,7 @@ async function authorizePaperTrade(env: Env, config: ReturnType<typeof getConfig
     body: JSON.stringify({
       cashToken: config.paperCashToken,
       trade: { ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() },
-      context: {
-        currentExposureWei: derived.totalExposure.toString(),
-        tokenExposureWei: tokenExposure.toString(),
-        openPositions: Object.keys(portfolio.positions).length,
-        nowMs: Date.now()
-      },
+      context: { currentExposureWei: exposure.toString(), tokenExposureWei: tokenExposure.toString(), openPositions: Object.keys(portfolio.positions).length, nowMs: Date.now() },
       limits: {
         maxTradeWei: limits.maxTradeWei.toString(), maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(), maxTokenExposureWei: limits.maxTokenExposureWei.toString(),
         maxOpenPositions: limits.maxOpenPositions, maxTradesPerDay: limits.maxTradesPerDay, cooldownSeconds: limits.cooldownSeconds, maxDailyLossWei: limits.maxDailyLossWei.toString()
@@ -125,7 +71,11 @@ async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
       method: "POST", body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value), headers: { "content-type": "application/json" }
     }));
   } catch (error) { throw new Error(`paper/execute: ${error instanceof Error ? error.message : "unknown error"}`); }
-  return { executed: response.ok, trade: result.trade };
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    return { executed: false, reason: body?.error ?? "Paper execution rejected." , trade: result.trade };
+  }
+  return { executed: true, trade: result.trade };
 }
 
 export { TradingBotState, RiskState };
@@ -139,6 +89,10 @@ export default {
     }
     try {
       const config = getConfig(env);
+      if (url.pathname === "/paper/reset" && request.method === "POST") {
+        if (config.mode !== "paper") return json({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
+        return stateStub(env).fetch(new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" }));
+      }
       if (url.pathname === "/health" && request.method === "GET") return json({ ok: true, mode: config.mode, liveTradingEnabled: config.liveTradingEnabled, geminiFallbacksConfigured: [Boolean(config.gemini.primaryKey), Boolean(config.gemini.fallback1Key), Boolean(config.gemini.fallback2Key)].filter(Boolean).length, configuration: { geminiPrimaryConfigured: Boolean(config.gemini.primaryKey), geminiFallback1Configured: Boolean(config.gemini.fallback1Key), geminiFallback2Configured: Boolean(config.gemini.fallback2Key), zeroExConfigured: Boolean(config.zeroExApiKey), paperTakerConfigured: Boolean(config.paperTakerAddress), theGraphConfigured: Boolean(config.strategy.theGraphApiKey), theGraphSecretSource: config.strategy.theGraphApiKeySource } });
       if (url.pathname === "/diagnostics/graph" && request.method === "GET") { const provider = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey ?? "", config.strategy.theGraphUniswapV3SubgraphId); return json(await provider.diagnose()); }
       if (url.pathname === "/risk/state" && request.method === "GET") return riskStub(env).fetch("https://jarvis-risk/state");
