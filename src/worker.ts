@@ -115,34 +115,44 @@ async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
     return { executed: false, reason: "Paper automation is not fully configured.", missing };
   }
 
-  const result = await evaluateAutomation({
-    gemini: [
-      { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
-      { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
-      { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
-    ],
-    strategy: {
-      ...config.strategy,
+  let result: Awaited<ReturnType<typeof evaluateAutomation>>;
+  try {
+    result = await evaluateAutomation({
+      gemini: [
+        { role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel },
+        { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model },
+        { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }
+      ],
+      strategy: {
+        ...config.strategy,
+        cashToken: config.paperCashToken,
+        uniswapApiKey: env.UNISWAP_API_KEY,
+        theGraphApiKey: config.strategy.theGraphApiKey,
+        theGraphUniswapV3SubgraphId: config.strategy.theGraphUniswapV3SubgraphId
+      },
+      zeroExApiKey: config.zeroExApiKey,
+      takerAddress: config.paperTakerAddress,
       cashToken: config.paperCashToken,
-      uniswapApiKey: env.UNISWAP_API_KEY,
-      theGraphApiKey: config.strategy.theGraphApiKey,
-      theGraphUniswapV3SubgraphId: config.strategy.theGraphUniswapV3SubgraphId
-    },
-    zeroExApiKey: config.zeroExApiKey,
-    takerAddress: config.paperTakerAddress,
-    cashToken: config.paperCashToken,
-    quoteAmountWei: config.strategy.quoteAmountWei,
-    slippageBps: config.strategy.slippageBps,
-    risk: config.risk,
-    allowQuoteBalanceIssues: config.strategy.allowQuoteBalanceIssues
-  });
+      quoteAmountWei: config.strategy.quoteAmountWei,
+      slippageBps: config.strategy.slippageBps,
+      risk: config.risk,
+      allowQuoteBalanceIssues: config.strategy.allowQuoteBalanceIssues
+    });
+  } catch (error) {
+    throw new Error(`strategy/evaluateAutomation: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
 
   if (!result.trade) return { executed: false, reason: result.blockedReason ?? "No trade selected." };
 
   const validation = validateTrade(result.trade, config.risk);
   if (validation) return { executed: false, reason: validation };
 
-  const riskResponse = await authorizePaperTrade(env, config, result.trade);
+  let riskResponse: Response | null;
+  try {
+    riskResponse = await authorizePaperTrade(env, config, result.trade);
+  } catch (error) {
+    throw new Error(`paper/authorizeRisk: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
   if (riskResponse) {
     return {
       executed: false,
@@ -150,16 +160,21 @@ async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
     };
   }
 
-  const response = await stateStub(env).fetch(
-    new Request(
-      `https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
-      {
-        method: "POST",
-        body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value),
-        headers: { "content-type": "application/json" }
-      }
-    )
-  );
+  let response: Response;
+  try {
+    response = await stateStub(env).fetch(
+      new Request(
+        `https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`,
+        {
+          method: "POST",
+          body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value),
+          headers: { "content-type": "application/json" }
+        }
+      )
+    );
+  } catch (error) {
+    throw new Error(`paper/execute: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
   return { executed: response.ok, trade: result.trade };
 }
 
