@@ -13,6 +13,7 @@ export interface Env {
   LIVE_CASH_TOKEN?: `0x${string}`;
   PAPER_STARTING_CASH_WEI?: string;
   PAPER_TAKER_ADDRESS?: `0x${string}`;
+  LIVE_DRY_RUN?: string;
   ZEROEX_API_KEY?: string;
   UNISWAP_API_KEY?: string;
   THE_GRAPH_API_KEY?: string;
@@ -53,6 +54,7 @@ export interface JarvisConfig {
   liveCashToken: `0x${string}`;
   paperStartingCashWei: bigint;
   paperTakerAddress?: `0x${string}`;
+  liveDryRun: boolean;
   zeroExApiKey?: string;
   baseRpcUrl: string;
   liveWalletAddress?: `0x${string}`;
@@ -92,7 +94,9 @@ export function getConfig(env: Env): JarvisConfig {
     paperCashToken,
     liveCashToken: env.LIVE_CASH_TOKEN ?? paperCashToken,
     paperStartingCashWei: bigintEnv(env.PAPER_STARTING_CASH_WEI, 1000000000000000000n, "PAPER_STARTING_CASH_WEI"),
-    paperTakerAddress: env.PAPER_TAKER_ADDRESS, zeroExApiKey: env.ZEROEX_API_KEY, baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
+    paperTakerAddress: env.PAPER_TAKER_ADDRESS,
+    liveDryRun: env.LIVE_DRY_RUN === "true",
+    zeroExApiKey: env.ZEROEX_API_KEY, baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
     liveWalletAddress: env.LIVE_WALLET_ADDRESS, livePrivateKey: env.LIVE_PRIVATE_KEY, liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
     gemini: {
       primaryKey: env.GEMINI_API_KEY ?? "", fallback1Key: env.GEMINI_API_KEY_FALLBACK_1 ?? "", fallback2Key: env.GEMINI_API_KEY_FALLBACK_2 ?? "",
