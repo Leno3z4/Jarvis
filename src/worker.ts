@@ -148,7 +148,9 @@ async function runPaperCycle(
     strategy: {
       ...config.strategy,
       cashToken: config.paperCashToken,
-      uniswapApiKey: (env as Env & { UNISWAP_API_KEY?: string }).UNISWAP_API_KEY
+      uniswapApiKey: env.UNISWAP_API_KEY,
+      theGraphApiKey: config.theGraphApiKey,
+      theGraphUniswapV3SubgraphId: config.theGraphUniswapV3SubgraphId
     },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.paperTakerAddress,
@@ -222,7 +224,8 @@ export default {
           geminiFallback1Configured: Boolean(config.gemini.fallback1Key),
           geminiFallback2Configured: Boolean(config.gemini.fallback2Key),
           zeroExConfigured: Boolean(config.zeroExApiKey),
-          paperTakerConfigured: Boolean(config.paperTakerAddress)
+          paperTakerConfigured: Boolean(config.paperTakerAddress),
+          theGraphConfigured: Boolean(config.theGraphApiKey)
         }
       });
     }
