@@ -1,4 +1,5 @@
 import { TheGraphMarketDataProvider } from "../market/thegraph";
+import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
 import type { GeminiCandidate } from "../ai/gemini";
 import type { TokenMarket } from "../market/types";
@@ -37,10 +38,9 @@ export async function runStrategyScan(config: {
     ? new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId)
     : undefined;
 
-  // New entries come exclusively from the low-cap universe. Do not fall back
-  // to broad Uniswap volume/TVL leaderboards, because that defeats the low-cap
-  // requirement whenever The Graph has no qualifying results.
-  let discoveredTokens: TokenMarket[] = graph
+  // New entries come exclusively from the low-cap universe. Never fall back
+  // to broad Uniswap volume/TVL leaderboards when low-cap discovery is empty.
+  const discoveredTokens: TokenMarket[] = graph
     ? await graph.discoverLowCapMarkets(
         config.strategy.lowCapMinLiquidityUsd,
         config.strategy.lowCapMaxLiquidityUsd,
@@ -48,39 +48,34 @@ export async function runStrategyScan(config: {
       )
     : [];
 
-  const heldMarkets = heldTokenAddresses.map((address) => heldMarket(address));
+  const heldMarkets = heldTokenAddresses.map(heldMarket);
   const unique = new Map<string, TokenMarket>();
   for (const market of [...heldMarkets, ...discoveredTokens]) {
     unique.set(market.address.toLowerCase(), market);
   }
-  let markets = [...unique.values()];
+  const markets = [...unique.values()];
 
-  // No The Graph low-cap data means no new-entry universe. Existing held
-  // positions can still proceed to exit analysis.
+  // No low-cap discovery data means no new-entry universe. Held positions can
+  // still be analyzed for exits.
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
 
-  if (graph && discoveredTokens.length > 0) {
-    markets = await graph.enrichMarkets(markets);
-  }
+  const enrichedMarkets = graph && discoveredTokens.length > 0
+    ? await graph.enrichMarkets(markets)
+    : markets;
 
-  if (discoveredTokens.length === 0 && heldMarkets.length > 0) {
-    // Held-only evaluation deliberately remains possible for exits.
-    markets = heldMarkets;
-  }
-
-  const quoteProvider = new (await import("../market/zeroex")).ZeroExQuoteProvider(
+  const quoteProvider = new ZeroExQuoteProvider(
     config.zeroExApiKey,
     config.takerAddress,
     8453,
     !config.strategy.allowQuoteBalanceIssues
   );
   const opportunities = await evaluateMarkets(
-    markets,
+    enrichedMarkets,
     config.gemini,
     config.strategy,
     quoteProvider,
     config.strategy.quoteAmountWei,
     config.strategy.slippageBps
   );
-  return { opportunities, discovered: markets.length };
+  return { opportunities, discovered: enrichedMarkets.length };
 }
