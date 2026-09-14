@@ -9,6 +9,7 @@ export async function runStrategyScan(config: {
   strategy: StrategyLoopConfig;
   zeroExApiKey?: string;
   takerAddress?: `0x${string}`;
+  allowQuoteBalanceIssues?: boolean;
   limit?: number;
 }): Promise<{ opportunities: StrategyOpportunity[]; discovered: number }> {
   if (!config.zeroExApiKey || !config.takerAddress) {
@@ -33,7 +34,12 @@ export async function runStrategyScan(config: {
 
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
 
-  const quoteProvider = new ZeroExQuoteProvider(config.zeroExApiKey, config.takerAddress);
+  const quoteProvider = new ZeroExQuoteProvider(
+    config.zeroExApiKey,
+    config.takerAddress,
+    8453,
+    !config.allowQuoteBalanceIssues
+  );
   const opportunities = await evaluateMarkets(
     markets,
     config.gemini,
