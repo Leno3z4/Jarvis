@@ -32,6 +32,21 @@ const NON_TARGET_SYMBOLS = new Set([
   "CBUSD", "CBBTC", "WBTC", "BTC", "XBTC"
 ]);
 
+const MEME_TERMS = [
+  "pepe", "doge", "shib", "floki", "bonk", "brett", "mog", "wojak", "degen",
+  "turbo", "toshi", "bobo", "andy", "ponke", "neiro", "mfer", "meme", "inu",
+  "dog", "cat", "frog", "ape", "monkey", "penguin", "chad", "giga", "ladys",
+  "normie", "keycat", "npc", "higher", "keyboard", "hamster", "goat", "panda",
+  "bear", "bull", "duck", "mouse", "rat", "capy", "pug", "shit", "clown"
+];
+
+const NON_MEME_TERMS = [
+  "wrapped", "staked", "restaked", "liquid staking", "yield", "vault", "index",
+  "governance", "oracle", "exchange", "router", "bridge", "infrastructure", "synthetic",
+  "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
+  "compound", "lido", "rocket pool", "maker", "curve"
+];
+
 function isNonTargetAsset(symbol: string): boolean {
   const normalized = symbol.trim().toUpperCase();
   if (NON_TARGET_SYMBOLS.has(normalized)) return true;
@@ -47,6 +62,12 @@ function isNonTargetAsset(symbol: string): boolean {
     || normalized.includes("BTC");
 }
 
+function isMemeToken(market: TokenMarket): boolean {
+  const text = `${market.name ?? ""} ${market.symbol}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (NON_MEME_TERMS.some((term) => text.includes(term))) return false;
+  return MEME_TERMS.some((term) => text.includes(term));
+}
+
 export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAULT_CONFIG): CandidateScore {
   const reasons: string[] = [];
   let score = 0;
@@ -55,6 +76,7 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 2_500;
   const lowCapVolumeRatio = config.lowCapMinVolumeToLiquidity ?? 0.1;
   const nonTargetAsset = isNonTargetAsset(market.symbol);
+  const memeToken = isMemeToken(market);
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
     && market.liquidityUsd <= lowCapMaxLiquidity
     && market.volume24hUsd >= lowCapMinVolume
@@ -62,6 +84,12 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     && market.volume24hUsd / market.liquidityUsd >= lowCapVolumeRatio;
 
   if (nonTargetAsset) reasons.push("non-target settlement/blue-chip asset");
+  if (memeToken) {
+    score += 20;
+    reasons.push("meme-token identity");
+  } else {
+    reasons.push("not identified as a meme token");
+  }
 
   if (market.dataCompleteness === "quote-only") {
     reasons.push("market data incomplete");
@@ -126,6 +154,7 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
 
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
+    && memeToken
     && isLowCapCandidate
     && hasValidPrice
     && staleMs <= 60_000
