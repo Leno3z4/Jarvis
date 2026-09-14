@@ -67,10 +67,16 @@ export interface JarvisConfig {
 const DEFAULT_PAPER_CASH_TOKEN = "0x4200000000000000000000000000000000000006" as `0x${string}`;
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 const DEFAULT_UNISWAP_V3_SUBGRAPH_ID = "GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz";
+
 const numberEnv = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback;
 };
 const intEnv = (value: string | undefined, fallback: number): number => Math.max(0, Math.floor(numberEnv(value, fallback)));
+function bigintEnv(value: string | undefined, fallback: bigint, name: string): bigint {
+  if (value === undefined || value === "") return fallback;
+  try { return BigInt(value); }
+  catch { throw new Error(`Invalid ${name}: expected an integer string.`); }
+}
 
 type ProcessLike = { env?: Record<string, string | undefined> };
 
@@ -88,16 +94,16 @@ export function getConfig(env: Env): JarvisConfig {
   return {
     mode,
     risk: {
-      maxTradeWei: BigInt(env.MAX_TRADE_WEI ?? "100000000000000000"),
-      maxPortfolioExposureWei: BigInt(env.MAX_EXPOSURE_WEI ?? "500000000000000000"),
-      maxTokenExposureWei: BigInt(env.MAX_TOKEN_EXPOSURE_WEI ?? "200000000000000000"),
+      maxTradeWei: bigintEnv(env.MAX_TRADE_WEI, 100000000000000000n, "MAX_TRADE_WEI"),
+      maxPortfolioExposureWei: bigintEnv(env.MAX_EXPOSURE_WEI, 500000000000000000n, "MAX_EXPOSURE_WEI"),
+      maxTokenExposureWei: bigintEnv(env.MAX_TOKEN_EXPOSURE_WEI, 200000000000000000n, "MAX_TOKEN_EXPOSURE_WEI"),
       maxOpenPositions: Math.max(1, intEnv(env.MAX_OPEN_POSITIONS, 5)),
       maxTradesPerDay: Math.max(1, intEnv(env.MAX_TRADES_PER_DAY, 24)),
       cooldownSeconds: intEnv(env.TRADE_COOLDOWN_SECONDS, 900),
-      maxDailyLossWei: BigInt(env.MAX_DAILY_LOSS_WEI ?? "100000000000000000")
+      maxDailyLossWei: bigintEnv(env.MAX_DAILY_LOSS_WEI, 100000000000000000n, "MAX_DAILY_LOSS_WEI")
     },
     paperCashToken: env.PAPER_CASH_TOKEN ?? DEFAULT_PAPER_CASH_TOKEN,
-    paperStartingCashWei: BigInt(env.PAPER_STARTING_CASH_WEI ?? "1000000000000000000"),
+    paperStartingCashWei: bigintEnv(env.PAPER_STARTING_CASH_WEI, 1000000000000000000n, "PAPER_STARTING_CASH_WEI"),
     paperTakerAddress: env.PAPER_TAKER_ADDRESS,
     zeroExApiKey: env.ZEROEX_API_KEY,
     baseRpcUrl: env.BASE_RPC_URL ?? DEFAULT_BASE_RPC_URL,
@@ -117,7 +123,7 @@ export function getConfig(env: Env): JarvisConfig {
       maxCandidates: Math.max(1, intEnv(env.STRATEGY_MAX_CANDIDATES, 5)),
       minGeminiConfidence: numberEnv(env.STRATEGY_MIN_CONFIDENCE, 0.70),
       maxGeminiRisk: env.STRATEGY_MAX_RISK ?? "MEDIUM",
-      quoteAmountWei: BigInt(env.STRATEGY_QUOTE_AMOUNT_WEI ?? "10000000000000000"),
+      quoteAmountWei: bigintEnv(env.STRATEGY_QUOTE_AMOUNT_WEI, 10000000000000000n, "STRATEGY_QUOTE_AMOUNT_WEI"),
       slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100))),
       allowQuoteBalanceIssues: mode === "paper",
       uniswapApiKey: env.UNISWAP_API_KEY,
