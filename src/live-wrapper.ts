@@ -11,7 +11,9 @@ import type { TradeRequest } from "./trading/types";
 const NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as `0x${string}`;
 
 function json(body: unknown, init: ResponseInit = {}): Response {
-  return Response.json(body, { ...init, headers: { "access-control-allow-origin": "*", ...Object.fromEntries(new Headers(init.headers).entries()) } });
+  const headers = new Headers(init.headers);
+  headers.set("access-control-allow-origin", "*");
+  return Response.json(body, { ...init, headers });
 }
 
 function liveStateStub(env: Env) {
@@ -22,9 +24,7 @@ async function trackedTokens(env: Env): Promise<`0x${string}`[]> {
   const response = await liveStateStub(env).fetch("https://jarvis-live/tokens");
   if (!response.ok) throw new Error("Live state unavailable.");
   const body = await response.json() as { tokens?: string[] };
-  return (body.tokens ?? [])
-    .filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token))
-    .map((token) => token as `0x${string}`);
+  return (body.tokens ?? []).filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token)).map((token) => token as `0x${string}`);
 }
 
 async function heldPositions(env: Env, config: ReturnType<typeof getConfig>): Promise<Record<string, string>> {
@@ -38,7 +38,7 @@ async function heldPositions(env: Env, config: ReturnType<typeof getConfig>): Pr
       const balance = await client.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [config.liveWalletAddress] });
       if (balance > 0n) positions[token.toLowerCase()] = balance.toString();
     } catch {
-      // Ignore a single stale token record; shared strategy continues with valid holdings.
+      // Ignore stale tracked tokens.
     }
   }
   return positions;
@@ -72,15 +72,7 @@ async function authorizeLiveTrade(env: Env, config: ReturnType<typeof getConfig>
       cashToken: config.liveCashToken,
       trade: { ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() },
       context: { currentExposureWei: exposureWei.toString(), tokenExposureWei: tokenExposureWei.toString(), openPositions, nowMs: Date.now() },
-      limits: {
-        maxTradeWei: limits.maxTradeWei.toString(),
-        maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(),
-        maxTokenExposureWei: limits.maxTokenExposureWei.toString(),
-        maxOpenPositions: limits.maxOpenPositions,
-        maxTradesPerDay: limits.maxTradesPerDay,
-        cooldownSeconds: limits.cooldownSeconds,
-        maxDailyLossWei: limits.maxDailyLossWei.toString()
-      }
+      limits: { maxTradeWei: limits.maxTradeWei.toString(), maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(), maxTokenExposureWei: limits.maxTokenExposureWei.toString(), maxOpenPositions: limits.maxOpenPositions, maxTradesPerDay: limits.maxTradesPerDay, cooldownSeconds: limits.cooldownSeconds, maxDailyLossWei: limits.maxDailyLossWei.toString() }
     })
   }));
   return response.ok ? null : response;
@@ -98,9 +90,7 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
 
   const positions = await heldPositions(env, config);
   const exposure = await liveExposure(env, config, positions);
-  if (Object.keys(positions).length > 0 && exposure.exposureWei === 0n) {
-    return { executed: false, reason: "Live exposure valuation failed; refusing to trade without complete position accounting." };
-  }
+  if (Object.keys(positions).length > 0 && exposure.exposureWei === 0n) return { executed: false, reason: "Live exposure valuation failed; refusing to trade without complete position accounting." };
 
   const automation = await evaluateAutomation({
     gemini: [
@@ -123,9 +113,7 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
   const validation = validateTrade(automation.trade, config.risk, config.liveCashToken);
   if (validation) return { executed: false, reason: validation };
 
-  const riskToken = automation.trade.tokenIn.toLowerCase() === config.liveCashToken.toLowerCase()
-    ? automation.trade.tokenOut.toLowerCase()
-    : automation.trade.tokenIn.toLowerCase();
+  const riskToken = automation.trade.tokenIn.toLowerCase() === config.liveCashToken.toLowerCase() ? automation.trade.tokenOut.toLowerCase() : automation.trade.tokenIn.toLowerCase();
   const tokenExposure = exposure.tokenExposureByAddress[riskToken] ?? 0n;
   const riskResponse = await authorizeLiveTrade(env, config, automation.trade, exposure.exposureWei, tokenExposure, Object.keys(positions).length);
   if (riskResponse) {
@@ -133,47 +121,35 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
     return { executed: false, reason: body.reason ?? body.error ?? "Live risk gate blocked trade." };
   }
 
-  const executor = new LiveExecutor({
-    apiKey: config.zeroExApiKey,
-    rpcUrl: config.baseRpcUrl,
-    privateKey: config.livePrivateKey as `0x${string}`,
-    walletAddress: config.liveWalletAddress,
-    enabled: config.liveTradingEnabled
-  });
+  const executor = new LiveExecutor({ apiKey: config.zeroExApiKey, rpcUrl: config.baseRpcUrl, privateKey: config.livePrivateKey as `0x${string}`, walletAddress: config.liveWalletAddress, enabled: config.liveTradingEnabled });
   const result = await executor.execute(automation.trade);
   if (result.status !== "submitted") return { executed: false, reason: result.message ?? "Live execution rejected.", trade: automation.trade };
 
-  await liveStateStub(env).fetch(new Request("https://jarvis-live/record", {
+  const recordResponse = await liveStateStub(env).fetch(new Request("https://jarvis-live/record", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      tokenIn: automation.trade.tokenIn,
-      tokenOut: automation.trade.tokenOut,
-      amountInWei: automation.trade.amountInWei.toString(),
-      amountOutWei: result.amountOutWei?.toString() ?? automation.trade.amountOutWei.toString(),
-      txHash: result.txHash,
-      reason: automation.trade.reason
-    })
+    body: JSON.stringify({ tokenIn: automation.trade.tokenIn, tokenOut: automation.trade.tokenOut, amountInWei: automation.trade.amountInWei.toString(), amountOutWei: result.amountOutWei?.toString() ?? automation.trade.amountOutWei.toString(), txHash: result.txHash, reason: automation.trade.reason })
   }));
+  if (!recordResponse.ok) return { executed: false, reason: "Live swap submitted but persistent live state could not be recorded; refusing to treat the cycle as complete.", txHash: result.txHash };
 
   return { executed: true, trade: automation.trade, txHash: result.txHash, message: result.message };
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const config = getConfig(env);
     if (config.mode === "live" && new URL(request.url).pathname === "/strategy/run" && request.method === "POST") {
       try { return json({ ok: true, ...(await runLiveCycle(env, config)) }); }
       catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Live strategy run failed." }, { status: 503 }); }
     }
-    return baseWorker.fetch(request, env, ctx);
+    return baseWorker.fetch(request, env);
   },
-  async scheduled(event: ScheduledEvent, env: Env, ctx?: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
     const config = getConfig(env);
     if (config.mode === "live") {
-      try { await runLiveCycle(env, config); } catch { /* scheduled live failures remain fail-closed */ }
+      try { await runLiveCycle(env, config); } catch { /* remain fail-closed on scheduled failures */ }
       return;
     }
-    await baseWorker.scheduled?.(event, env, ctx);
+    await baseWorker.scheduled?.(event, env);
   }
 };
