@@ -9,6 +9,16 @@
   "vars": {
     "PAPER_TAKER_ADDRESS": "0x7aCd7C622a87a148CcdEBd213D7C4070E200186F"
   },
+  "secrets": {
+    "required": [
+      "GEMINI_API_KEY",
+      "GEMINI_API_KEY_FALLBACK_1",
+      "GEMINI_API_KEY_FALLBACK_2",
+      "ZEROEX_API_KEY",
+      "UNISWAP_API_KEY",
+      "THE_GRAPH_API_KEY"
+    ]
+  },
   "durable_objects": {
     "bindings": [
       { "name": "BOT_STATE", "class_name": "TradingBotState" },
