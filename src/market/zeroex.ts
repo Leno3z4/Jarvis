@@ -16,36 +16,14 @@ interface ZeroExQuoteResponse {
     value?: string | null;
     gas?: string | null;
     gasPrice?: string | null;
-  };
+  } | null;
   liquidityAvailable?: boolean;
-  allowanceTarget?: string;
+  allowanceTarget?: string | null;
   issues?: {
-    allowance?: { actual: string; spender: string; required?: string } | null;
-    balance?: { token: string; actual: string; expected: string } | null;
+    allowance?: { actual?: string; spender?: string; required?: string | null } | null;
+    balance?: { token?: string; actual?: string; expected?: string } | null;
     simulationIncomplete?: boolean;
   };
-}
-
-function parsePositiveBigInt(value: string | null | undefined, field: string): bigint {
-  if (value == null || value.trim() === "") {
-    throw new Error(`0x quote missing ${field}.`);
-  }
-  try {
-    const parsed = BigInt(value);
-    if (parsed <= 0n) throw new Error();
-    return parsed;
-  } catch {
-    throw new Error(`0x quote returned invalid ${field}: ${value}.`);
-  }
-}
-
-function parseOptionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
-  if (value == null || value.trim() === "") return undefined;
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`0x quote returned invalid ${field}: ${value}.`);
-  }
 }
 
 export interface ExecutableQuote extends Quote {
@@ -60,6 +38,24 @@ export interface ExecutableQuote extends Quote {
   allowanceRequired?: bigint;
   balanceIssue?: boolean;
   simulationIncomplete?: boolean;
+}
+
+function requiredBigInt(value: unknown, field: string): bigint {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    throw new Error(`0x response missing ${field}.`);
+  }
+  const text = String(value).trim();
+  if (!text) throw new Error(`0x response missing ${field}.`);
+  try {
+    return BigInt(text);
+  } catch {
+    throw new Error(`0x response returned invalid ${field}: ${text.slice(0, 80)}`);
+  }
+}
+
+function optionalBigInt(value: unknown, field: string): bigint | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  return requiredBigInt(value, field);
 }
 
 export class ZeroExQuoteProvider implements QuoteProvider {
@@ -100,28 +96,28 @@ export class ZeroExQuoteProvider implements QuoteProvider {
     if (data.liquidityAvailable === false) {
       throw new Error("0x reports no liquidity for this route.");
     }
+
     if (this.rejectBalanceIssue && data.issues?.balance) {
-      throw new Error(
-        `0x reports insufficient taker balance (actual=${data.issues.balance.actual}, expected=${data.issues.balance.expected}).`
-      );
+      const actual = data.issues.balance.actual ?? "unknown";
+      const expected = data.issues.balance.expected ?? "unknown";
+      throw new Error(`0x reports insufficient taker balance (actual=${actual}, expected=${expected}).`);
     }
 
-    const buyAmount = parsePositiveBigInt(data.buyAmount, "buyAmount");
-    const sellAmount = parsePositiveBigInt(data.sellAmount, "sellAmount");
-    const transactionTo = data.transaction?.to;
-    const transactionData = data.transaction?.data;
-    if (!transactionTo || !transactionData) {
+    const transaction = data.transaction;
+    if (!transaction?.to || !transaction.data) {
       throw new Error("0x returned no executable transaction.");
     }
 
-    const gas = parseOptionalBigInt(data.transaction?.gas, "transaction.gas");
-    const gasPrice = parseOptionalBigInt(data.transaction?.gasPrice, "transaction.gasPrice");
-    const topGas = parseOptionalBigInt(data.gas, "gas");
-    const topGasPrice = parseOptionalBigInt(data.gasPrice, "gasPrice");
-    const transactionValue = parseOptionalBigInt(data.transaction?.value, "transaction.value") ?? 0n;
+    const sellAmount = requiredBigInt(data.sellAmount, "sellAmount");
+    const buyAmount = requiredBigInt(data.buyAmount, "buyAmount");
+    if (sellAmount <= 0n) throw new Error("0x returned a non-positive sellAmount.");
+    if (buyAmount <= 0n) throw new Error("0x returned a non-positive buyAmount.");
 
     const allowance = data.issues?.allowance ?? null;
-    const spender = allowance?.spender ?? data.allowanceTarget;
+    const spender = allowance?.spender ?? data.allowanceTarget ?? undefined;
+    const allowanceRequired = allowance?.required !== undefined && allowance?.required !== null
+      ? optionalBigInt(allowance.required, "issues.allowance.required")
+      : undefined;
 
     return {
       tokenIn: request.tokenIn,
@@ -129,24 +125,20 @@ export class ZeroExQuoteProvider implements QuoteProvider {
       amountInWei: sellAmount,
       amountOutWei: buyAmount,
       priceImpactBps: 0,
-      estimatedGasWei: gas && gasPrice
-        ? gas * gasPrice
-        : topGas && topGasPrice
-          ? topGas * topGasPrice
-          : undefined,
+      estimatedGasWei: data.gas && data.gasPrice
+        ? requiredBigInt(data.gas, "gas") * requiredBigInt(data.gasPrice, "gasPrice")
+        : undefined,
       provider: "0x",
       observedAt: Date.now(),
       transaction: {
-        to: transactionTo as `0x${string}`,
-        data: transactionData as `0x${string}`,
-        value: transactionValue,
-        gas,
-        gasPrice
+        to: transaction.to as `0x${string}`,
+        data: transaction.data as `0x${string}`,
+        value: requiredBigInt(transaction.value ?? "0", "transaction.value"),
+        gas: optionalBigInt(transaction.gas, "transaction.gas"),
+        gasPrice: optionalBigInt(transaction.gasPrice, "transaction.gasPrice")
       },
       allowanceTarget: spender as `0x${string}` | undefined,
-      allowanceRequired: allowance?.required
-        ? parsePositiveBigInt(allowance.required, "allowance.required")
-        : undefined,
+      allowanceRequired,
       balanceIssue: Boolean(data.issues?.balance),
       simulationIncomplete: Boolean(data.issues?.simulationIncomplete)
     };
