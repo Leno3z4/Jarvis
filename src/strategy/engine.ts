@@ -76,6 +76,9 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     if (market.change24hPct >= config.minChange24hPct && market.change24hPct <= config.maxChange24hPct) {
       score += 25;
       reasons.push("positive momentum");
+    } else if (isLowCapCandidate && market.change24hPct >= 0 && market.change24hPct < config.minChange24hPct) {
+      score += 10;
+      reasons.push("early low-cap momentum");
     } else if (market.change24hPct < 0) {
       score -= 10;
       reasons.push("negative momentum");
@@ -111,16 +114,21 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   }
   if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
 
-  // New entries are strictly low-cap. Existing held positions are handled
-  // separately by evaluateMarkets so they can still be evaluated for exits.
+  const shortTermTrigger = (market.change1hPct ?? 0) >= 0.25
+    || (market.change6hPct ?? 0) >= 0.75
+    || (market.nearRecentHighPct ?? 0) >= 95;
+
+  // New entries are strictly low-cap. Keep the trigger selective, but do not
+  // require a +2% 24h move when a fresh low-cap is just beginning to accelerate.
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
     && isLowCapCandidate
     && hasValidPrice
     && staleMs <= 60_000
     && market.change24hPct >= 0
-    && (market.volumeSpikeRatio ?? 0) >= 1.25
-    && score >= config.minScore;
+    && (market.volumeSpikeRatio ?? 0) >= 1.15
+    && shortTermTrigger
+    && score >= Math.max(55, config.minScore - 5);
 
   return { market, score, reasons, eligible: lowCapEligible };
 }
