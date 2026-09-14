@@ -66,9 +66,10 @@ async function liveExposure(env: Env, config: ReturnType<typeof getConfig>, posi
   return { exposureWei, tokenExposureByAddress };
 }
 
-async function authorizeLiveTrade(env: Env, config: ReturnType<typeof getConfig>, trade: TradeRequest, exposureWei: bigint, tokenExposureWei: bigint, openPositions: number): Promise<Response | null> {
+async function authorizeLiveTrade(env: Env, config: ReturnType<typeof getConfig>, trade: TradeRequest, exposureWei: bigint, tokenExposureWei: bigint, openPositions: number, dryRun: boolean): Promise<Response | null> {
   const limits = config.risk;
-  const response = await env.RISK_STATE.get(env.RISK_STATE.idFromName("main")).fetch(new Request("https://jarvis-risk/authorize", {
+  const path = dryRun ? "/check" : "/authorize";
+  const response = await env.RISK_STATE.get(env.RISK_STATE.idFromName("main")).fetch(new Request(`https://jarvis-risk${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -119,7 +120,7 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
 
   const riskToken = automation.trade.tokenIn.toLowerCase() === config.liveCashToken.toLowerCase() ? automation.trade.tokenOut.toLowerCase() : automation.trade.tokenIn.toLowerCase();
   const tokenExposure = exposure.tokenExposureByAddress[riskToken] ?? 0n;
-  const riskResponse = await authorizeLiveTrade(env, config, automation.trade, exposure.exposureWei, tokenExposure, Object.keys(positions).length);
+  const riskResponse = await authorizeLiveTrade(env, config, automation.trade, exposure.exposureWei, tokenExposure, Object.keys(positions).length, dryRun);
   if (riskResponse) {
     const body = await riskResponse.json() as { reason?: string; error?: string };
     return { executed: false, dryRun, reason: body.reason ?? body.error ?? "Live risk gate blocked trade.", trade: automation.trade };
@@ -130,7 +131,7 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
       executed: false,
       dryRun: true,
       validated: true,
-      reason: "Live dry-run passed strategy, quote, validation, and risk gates; no transaction was sent.",
+      reason: "Live dry-run passed strategy, quote, validation, and non-mutating risk gates; no transaction was sent.",
       trade: automation.trade
     };
   }
