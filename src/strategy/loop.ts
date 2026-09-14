@@ -9,6 +9,8 @@ export interface StrategyLoopConfig extends StrategyConfig {
   maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
   cashToken: `0x${string}`;
   uniswapApiKey?: string;
+  theGraphApiKey?: string;
+  theGraphUniswapV3SubgraphId?: string;
 }
 
 export interface StrategyOpportunity {
