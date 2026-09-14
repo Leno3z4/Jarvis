@@ -37,6 +37,21 @@ function rejectionSummary(discovered: number, opportunities: AutomationResult["o
   return `No executable low-cap meme opportunity found (discovered ${discovered}). ${top}`;
 }
 
+function jsonSafeTrade(trade: TradeRequest): TradeRequest {
+  return Object.assign(trade, {
+    toJSON() {
+      return {
+        tokenIn: trade.tokenIn,
+        tokenOut: trade.tokenOut,
+        amountInWei: trade.amountInWei.toString(),
+        amountOutWei: trade.amountOutWei.toString(),
+        slippageBps: trade.slippageBps,
+        reason: trade.reason
+      };
+    }
+  }) as TradeRequest;
+}
+
 export async function evaluateAutomation(config: AutomationConfig): Promise<AutomationResult> {
   const result = await runStrategyScan({
     gemini: config.gemini,
@@ -44,8 +59,6 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
     allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
-    // Discover a broad low-cap universe first. The deterministic scanner still
-    // caps the number of candidates passed to Gemini at strategy.maxCandidates.
     limit: Math.min(Math.max(config.strategy.maxCandidates, 30), 50)
   });
 
@@ -57,14 +70,14 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
   const gateError = evaluateExecutionGate({ decision, amountInWei, currentExposureWei: 0n, cashToken: config.cashToken }, config.risk);
   if (gateError) return { discovered: result.discovered, opportunities: result.opportunities, blockedReason: gateError };
 
-  const trade: TradeRequest = {
+  const trade: TradeRequest = jsonSafeTrade({
     tokenIn: decision.decision === "BUY" ? config.cashToken : best.market.address,
     tokenOut: decision.decision === "BUY" ? best.market.address : config.cashToken,
     amountInWei,
     amountOutWei: best.quoteAmountOutWei ?? 0n,
     slippageBps: config.slippageBps,
     reason: `strategy:${decision.decision.toLowerCase()} score=${best.scannerScore} confidence=${decision.confidence.toFixed(2)} ${decision.reason}`
-  };
+  });
 
   return { discovered: result.discovered, opportunities: result.opportunities, trade };
 }
