@@ -114,21 +114,17 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   }
   if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
 
-  const shortTermTrigger = (market.change1hPct ?? 0) >= 0.25
-    || (market.change6hPct ?? 0) >= 0.75
-    || (market.nearRecentHighPct ?? 0) >= 95;
-
-  // New entries are strictly low-cap. Keep the trigger selective, but do not
-  // require a +2% 24h move when a fresh low-cap is just beginning to accelerate.
+  // New entries stay low-cap-only, but Gemini should see the viable low-cap
+  // universe instead of being blocked by multiple simultaneous momentum gates.
+  // The deterministic layer handles hard market-data/safety constraints;
+  // Gemini decides whether the candidate is actually worth buying.
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
     && isLowCapCandidate
     && hasValidPrice
     && staleMs <= 60_000
-    && market.change24hPct >= 0
-    && (market.volumeSpikeRatio ?? 0) >= 1.15
-    && shortTermTrigger
-    && score >= Math.max(55, config.minScore - 5);
+    && market.change24hPct <= config.maxChange24hPct
+    && score >= 45;
 
   return { market, score, reasons, eligible: lowCapEligible };
 }
