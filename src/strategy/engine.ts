@@ -29,9 +29,8 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
 
   if (market.dataCompleteness === "quote-only") {
     // A live quote proves a route exists, but does not establish the liquidity,
-    // volume, or momentum data required by the strategy. Keep this below the
-    // execution eligibility threshold and never send it to Gemini as a trading
-    // candidate based on fabricated or missing market metrics.
+    // volume, or momentum data required by the strategy. Keep it below the
+    // execution threshold and never send it to Gemini based on fabricated metrics.
     score += 40;
     reasons.push("live Uniswap quote available");
     reasons.push("liquidity unavailable from current provider");
@@ -47,6 +46,7 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
 
     reasons.push("volume unavailable from current provider");
     reasons.push("momentum unavailable from current provider");
+    reasons.push("degraded market-data mode");
   } else {
     if (market.liquidityUsd >= config.minLiquidityUsd) {
       score += 30;
@@ -82,18 +82,29 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
     reasons.push("stale market data");
   }
 
-  if (Number.isFinite(market.priceUsd) && market.priceUsd > 0) {
+  const hasValidPrice = Number.isFinite(market.priceUsd) && market.priceUsd > 0;
+  if (hasValidPrice) {
     score += 10;
     reasons.push("valid price");
   } else {
     reasons.push("price unavailable");
   }
 
+  // Uniswap's current pool endpoint gives us live price/liquidity state, but not
+  // 24h volume or momentum. In that degraded mode, require the hard facts we do
+  // have (healthy liquidity, valid price, and fresh observation) and leave the
+  // remaining judgment to Gemini plus the execution/risk gates. Never fabricate
+  // missing volume or momentum values.
+  const degradedEligible = market.dataCompleteness === "liquidity-price-only"
+    && market.liquidityUsd >= config.minLiquidityUsd
+    && hasValidPrice
+    && staleMs <= 60_000;
+
   return {
     market,
     score,
     reasons,
-    eligible: market.dataCompleteness !== "quote-only" && score >= config.minScore
+    eligible: market.dataCompleteness !== "quote-only" && (score >= config.minScore || degradedEligible)
   };
 }
 
