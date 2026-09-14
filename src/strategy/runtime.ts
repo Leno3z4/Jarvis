@@ -17,7 +17,10 @@ export async function runStrategyScan(config: {
 
   const limit = Math.min(Math.max(config.limit ?? 20, 10), 30);
   const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
-  let markets = await uniswap.discoverBaseMarkets(limit);
+  const heldTokenAddresses = Object.entries(config.strategy.heldPositions ?? {})
+    .filter(([, amount]) => amount !== "0")
+    .map(([address]) => address as `0x${string}`);
+  let markets = await uniswap.discoverBaseMarkets(limit, heldTokenAddresses);
 
   if (config.strategy.theGraphApiKey) {
     const graph = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId);
