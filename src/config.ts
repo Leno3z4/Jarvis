@@ -59,11 +59,12 @@ export interface JarvisConfig {
     minLiquidityUsd: number; minVolume24hUsd: number; minChange24hPct: number; maxChange24hPct: number;
     minScore: number; maxCandidates: number; minGeminiConfidence: number; maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
     quoteAmountWei: bigint; slippageBps: number;
+    allowQuoteBalanceIssues: boolean;
     uniswapApiKey?: string; theGraphApiKey?: string; theGraphApiKeySource: "env" | "process.env" | "missing"; theGraphUniswapV3SubgraphId?: string;
   };
 }
 
-const DEFAULT_PAPER_CASH_TOKEN = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+const DEFAULT_PAPER_CASH_TOKEN = "0x4200000000000000000000000000000000000006" as `0x${string}`;
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 const DEFAULT_UNISWAP_V3_SUBGRAPH_ID = "GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz";
 const numberEnv = (value: string | undefined, fallback: number): number => {
@@ -118,6 +119,7 @@ export function getConfig(env: Env): JarvisConfig {
       maxGeminiRisk: env.STRATEGY_MAX_RISK ?? "MEDIUM",
       quoteAmountWei: BigInt(env.STRATEGY_QUOTE_AMOUNT_WEI ?? "10000000000000000"),
       slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100))),
+      allowQuoteBalanceIssues: mode === "paper",
       uniswapApiKey: env.UNISWAP_API_KEY,
       theGraphApiKey: graphSecret.value,
       theGraphApiKeySource: graphSecret.source,
