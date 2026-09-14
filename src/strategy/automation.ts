@@ -41,7 +41,10 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
     allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
-    limit: Math.min(config.strategy.maxCandidates, 10)
+    // Discover a wider universe, then let the deterministic scanner reduce it
+    // before Gemini is called. This prevents the top-volume/top-TVL assets from
+    // crowding low-cap momentum candidates out of discovery.
+    limit: Math.min(Math.max(config.strategy.maxCandidates, 20), 30)
   });
 
   const best = result.opportunities.find((item) => item.executable);
