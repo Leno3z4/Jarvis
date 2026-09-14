@@ -44,7 +44,8 @@ export class ZeroExQuoteProvider implements QuoteProvider {
   constructor(
     private readonly apiKey: string,
     private readonly taker?: `0x${string}`,
-    private readonly chainId = 8453
+    private readonly chainId = 8453,
+    private readonly rejectBalanceIssue = true
   ) {}
 
   async getQuote(request: QuoteRequest): Promise<ExecutableQuote> {
@@ -77,8 +78,10 @@ export class ZeroExQuoteProvider implements QuoteProvider {
     if (data.liquidityAvailable === false) {
       throw new Error("0x reports no liquidity for this route.");
     }
-    if (data.issues?.balance) {
-      throw new Error("Wallet balance is insufficient for the requested trade.");
+    if (this.rejectBalanceIssue && data.issues?.balance) {
+      throw new Error(
+        `0x reports insufficient taker balance (actual=${data.issues.balance.actual}, expected=${data.issues.balance.expected}).`
+      );
     }
     if (!data.transaction?.to || !data.transaction.data) {
       throw new Error("0x returned no executable transaction.");
