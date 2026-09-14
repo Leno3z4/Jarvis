@@ -2,7 +2,6 @@ import { UniswapTokenProvider } from "../market/uniswap";
 import { TheGraphMarketDataProvider } from "../market/thegraph";
 import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
-import { scanMarkets } from "./engine";
 import type { GeminiCandidate } from "../ai/gemini";
 
 export async function runStrategyScan(config: {
@@ -11,7 +10,7 @@ export async function runStrategyScan(config: {
   zeroExApiKey?: string;
   takerAddress?: `0x${string}`;
   limit?: number;
-}): Promise<{ opportunities: StrategyOpportunity[]; discovered: number; scannerCandidates: number }> {
+}): Promise<{ opportunities: StrategyOpportunity[]; discovered: number }> {
   if (!config.zeroExApiKey || !config.takerAddress) throw new Error("0x API key and taker address are required for strategy evaluation.");
   const uniswapApiKey = config.strategy.uniswapApiKey;
   if (!uniswapApiKey) throw new Error("Uniswap API key is required for Base token discovery.");
@@ -43,9 +42,8 @@ export async function runStrategyScan(config: {
     markets = await graph.enrichMarkets(markets);
   }
 
-  if (markets.length === 0) return { opportunities: [], discovered: 0, scannerCandidates: 0 };
-  const scannerCandidates = scanMarkets(markets, config.strategy).length;
+  if (markets.length === 0) return { opportunities: [], discovered: 0 };
   const quoteProvider = new ZeroExQuoteProvider(config.zeroExApiKey, config.takerAddress, 8453, !config.strategy.allowQuoteBalanceIssues);
   const opportunities = await evaluateMarkets(markets, config.gemini, config.strategy, quoteProvider, config.strategy.quoteAmountWei, config.strategy.slippageBps);
-  return { opportunities, discovered: markets.length, scannerCandidates };
+  return { opportunities, discovered: markets.length };
 }
