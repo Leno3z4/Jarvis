@@ -84,7 +84,7 @@ function marketFromPool(token: UniswapToken, pool: PoolInfo, quoteTokenAddress: 
 export class UniswapTokenProvider {
   constructor(private readonly apiKey: string, private readonly swapper: `0x${string}`) {}
 
-  async discoverBaseTokenAddresses(limit = 20): Promise<TokenMarket[]> {
+  async discoverBaseTokenAddresses(limit = 20, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
     if (!this.apiKey) throw new Error("Uniswap API key is not configured.");
     const requested = Math.min(Math.max(limit, 10), 30);
     const fetchTokens = async (sort: "volume_24h" | "tvl") => {
@@ -101,11 +101,20 @@ export class UniswapTokenProvider {
       if (address === BASE_USDC.toLowerCase() || address === BASE_WETH.toLowerCase()) continue;
       unique.set(address, token);
     }
-    return [...unique.values()].slice(0, Math.min(requested * 2, 50)).map((token) => ({ address: token.address as `0x${string}`, symbol: token.symbol ?? token.name ?? "UNKNOWN", decimals: Number(token.decimals ?? 18), priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" }));
+    const markets = [...unique.values()].slice(0, Math.min(requested * 2, 50)).map((token) => ({ address: token.address as `0x${string}`, symbol: token.symbol ?? token.name ?? "UNKNOWN", decimals: Number(token.decimals ?? 18), priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" as const }));
+    for (const address of additionalTokenAddresses) {
+      if (!isAddress(address) || !isErc20Address(address)) continue;
+      const lower = address.toLowerCase();
+      if (lower === BASE_USDC.toLowerCase() || lower === BASE_WETH.toLowerCase()) continue;
+      if (!unique.has(lower) && !markets.some((market) => market.address.toLowerCase() === lower)) {
+        markets.push({ address, symbol: "HELD", decimals: 18, priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" });
+      }
+    }
+    return markets;
   }
 
-  async discoverBaseMarkets(limit = 20): Promise<TokenMarket[]> {
-    const tokens = await this.discoverBaseTokenAddresses(Math.min(Math.max(limit, 10), 30));
+  async discoverBaseMarkets(limit = 20, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
+    const tokens = await this.discoverBaseTokenAddresses(Math.min(Math.max(limit, 10), 30), additionalTokenAddresses);
     const markets: TokenMarket[] = []; const failures: string[] = [];
     const usdcForWeth = await quoteToken(this.apiKey, this.swapper, BASE_WETH, BASE_USDC, DISCOVERY_WETH_AMOUNT_WEI).catch((error) => { failures.push(`WETH/USDC:${error instanceof Error ? error.message : "unknown"}`); return 0n; });
     if (usdcForWeth <= 0n) throw new Error(`Uniswap quote discovery failed. ${failures.join(" | ")}`);
