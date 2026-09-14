@@ -23,11 +23,15 @@ export async function analyzeCandidate(candidate: CandidateScore, geminiCandidat
 
 Position currently held: ${positionHeld ? "YES" : "NO"}
 
-ENTRY setup: accumulation/consolidation followed by a breakout or reclaim of recent resistance, rising short-term momentum, and abnormal volume expansion. Prefer early liquid setups over already-parabolic moves. A low-cap candidate is a smaller-liquidity token, not a guaranteed low market-cap token; market cap is not supplied.
+ENTRY objective: find early low-cap meme setups with a favorable risk/reward profile, not only perfect breakout candles. Accept any ONE of these concrete setups when supported by the supplied data:
+1) breakout/reclaim: price near the recent high with improving 1h/6h momentum and/or above-baseline hourly volume;
+2) trend continuation: positive 1h and 6h momentum with healthy 24h momentum and adequate liquidity/volume;
+3) early rotation/reversal: 24h momentum is positive or near flat, 6h momentum is positive or stabilizing, and the 1h pullback is controlled (not a sharp reversal), especially when price is near a recent high.
+Do NOT require a volumeSpikeRatio >= 2. A ratio below 1.0 is a warning, not an automatic SKIP, when momentum structure is otherwise healthy. Penalize genuinely negative momentum across multiple timeframes, illiquidity, and parabolic/extended 24h moves.
 
 EXIT setup when Position currently held=YES: SELL when the supplied data shows a credible loss of the setup, such as failed breakout/reclaim, sharp 1h/6h momentum reversal, distribution or volume deterioration after a move, price becoming stretched near a recent high while short-term momentum fades, or other clear evidence that holding is no longer justified. HOLD when the position remains structurally healthy and no exit trigger is confirmed. Do not invent stop-loss or profit targets.
 
-For BUY decisions, require a concrete trigger in the supplied data such as volume expansion plus positive short-term momentum and/or price pressing the recent high. Penalize extended 24h moves and weak liquidity. SKIP when liquidity/data quality/risk is poor.
+For BUY decisions, require a concrete trigger in the supplied data. Prefer the strongest available setup, but do not reject a good early meme setup merely because one indicator is not yet explosive. SKIP when liquidity/data quality/risk is poor or when the supplied momentum structure is clearly deteriorating.
 
 Return JSON only with exactly these fields:
 - decision: BUY | SELL | HOLD | SKIP
@@ -40,6 +44,7 @@ Market snapshot:
 ${JSON.stringify({
   address: market.address,
   symbol: market.symbol,
+  name: market.name,
   decimals: market.decimals,
   priceUsd: market.priceUsd,
   liquidityUsd: market.liquidityUsd,
