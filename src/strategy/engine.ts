@@ -27,14 +27,24 @@ const DEFAULT_CONFIG: StrategyConfig = {
 };
 
 const NON_TARGET_SYMBOLS = new Set([
-  "ETH", "WETH", "USDC", "USDT", "DAI", "USDBC", "USDE", "USDS",
-  "CBUSD", "CBBTC", "CBETH", "WBTC", "BTC", "XBTC"
+  "ETH", "WETH", "STETH", "WSTETH", "RETH", "WEETH", "CBETH", "METH", "OETH",
+  "FRXETH", "SFRXETH", "EETH", "WRSETH", "ANKRETH", "USDC", "USDT", "DAI", "USDBC", "USDE", "USDS",
+  "CBUSD", "CBBTC", "WBTC", "BTC", "XBTC"
 ]);
 
 function isNonTargetAsset(symbol: string): boolean {
   const normalized = symbol.trim().toUpperCase();
   if (NON_TARGET_SYMBOLS.has(normalized)) return true;
-  return /^(USD|USDC|USDT|DAI|EUR|GBP|JPY)[A-Z0-9]*$/.test(normalized);
+  if (/^(USD|USDC|USDT|DAI|EUR|GBP|JPY)[A-Z0-9]*$/.test(normalized)) return true;
+  return normalized.includes("WSTETH")
+    || normalized.includes("WEETH")
+    || normalized.includes("STETH")
+    || normalized.includes("RETH")
+    || normalized.includes("CBETH")
+    || normalized.includes("FRXETH")
+    || normalized.includes("SFRXETH")
+    || normalized.includes("WBTC")
+    || normalized.includes("BTC");
 }
 
 export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAULT_CONFIG): CandidateScore {
@@ -114,10 +124,6 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   }
   if (isLowCapCandidate) reasons.push("low-cap momentum candidate");
 
-  // New entries stay low-cap-only, but Gemini should see the viable low-cap
-  // universe instead of being blocked by multiple simultaneous momentum gates.
-  // The deterministic layer handles hard market-data/safety constraints;
-  // Gemini decides whether the candidate is actually worth buying.
   const lowCapEligible = market.dataCompleteness === "full"
     && !nonTargetAsset
     && isLowCapCandidate
