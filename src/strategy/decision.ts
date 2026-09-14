@@ -16,13 +16,18 @@ function parseDecision(text: string): StrategyDecision {
   return { decision: raw.decision, confidence: raw.confidence as number, risk: raw.risk, reason: raw.reason, suggestedSizeBps: raw.suggestedSizeBps as number };
 }
 
-export async function analyzeCandidate(candidate: CandidateScore, geminiCandidates: GeminiCandidate[]): Promise<{ decision: StrategyDecision; provider: { role: string; model: string } }> {
+export async function analyzeCandidate(candidate: CandidateScore, geminiCandidates: GeminiCandidate[], context: { positionHeld?: boolean } = {}): Promise<{ decision: StrategyDecision; provider: { role: string; model: string } }> {
   const market = candidate.market;
+  const positionHeld = Boolean(context.positionHeld);
   const prompt = `You are Jarvis, a disciplined Base-chain meme-coin trading decision assistant. Analyze ONLY the supplied market snapshot. Do not invent facts or assume a token is safe. Treat unavailable fields as unavailable.
 
-The scanner is inspired by discretionary meme-coin setups: accumulation/consolidation, a breakout or reclaim of recent resistance, rising short-term momentum, and an abnormal volume expansion. Prefer early, liquid setups over already-parabolic moves. A low-cap candidate is a smaller-liquidity token, not a guaranteed low market-cap token; market cap is not supplied.
+Position currently held: ${positionHeld ? "YES" : "NO"}
 
-For BUY decisions, require a concrete trigger in the supplied data such as volume expansion plus positive short-term momentum and/or price pressing the recent high. Penalize extended 24h moves and weak liquidity. HOLD when the setup is interesting but the trigger is not confirmed. SKIP when liquidity/data quality/risk is poor.
+ENTRY setup: accumulation/consolidation followed by a breakout or reclaim of recent resistance, rising short-term momentum, and abnormal volume expansion. Prefer early liquid setups over already-parabolic moves. A low-cap candidate is a smaller-liquidity token, not a guaranteed low market-cap token; market cap is not supplied.
+
+EXIT setup when Position currently held=YES: SELL when the supplied data shows a credible loss of the setup, such as failed breakout/reclaim, sharp 1h/6h momentum reversal, distribution or volume deterioration after a move, price becoming stretched near a recent high while short-term momentum fades, or other clear evidence that holding is no longer justified. HOLD when the position remains structurally healthy and no exit trigger is confirmed. Do not invent stop-loss or profit targets.
+
+For BUY decisions, require a concrete trigger in the supplied data such as volume expansion plus positive short-term momentum and/or price pressing the recent high. Penalize extended 24h moves and weak liquidity. SKIP when liquidity/data quality/risk is poor.
 
 Return JSON only with exactly these fields:
 - decision: BUY | SELL | HOLD | SKIP
