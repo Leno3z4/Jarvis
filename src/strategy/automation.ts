@@ -14,6 +14,7 @@ export interface AutomationConfig {
   slippageBps: number;
   risk: RiskLimits;
   allowQuoteBalanceIssues?: boolean;
+  heldPositions?: Record<string, string>;
 }
 
 export interface AutomationResult {
@@ -23,32 +24,20 @@ export interface AutomationResult {
   blockedReason?: string;
 }
 
-function rejectionSummary(
-  discovered: number,
-  opportunities: AutomationResult["opportunities"]
-): string {
-  if (opportunities.length === 0) {
-    return `No strategy candidates passed the deterministic scanner (discovered ${discovered} markets).`;
-  }
-
-  const top = opportunities
-    .slice(0, 3)
-    .map((item) => {
-      const geminiDetail = `Gemini ${item.decision.decision} confidence=${item.decision.confidence.toFixed(2)} risk=${item.decision.risk}: ${item.decision.reason}`;
-      const reason = item.rejectionReason
-        ? `${item.rejectionReason} ${geminiDetail}`
-        : geminiDetail;
-      return `${item.market.symbol} score=${item.scannerScore}: ${reason}`;
-    })
-    .join(" | ");
-
+function rejectionSummary(discovered: number, opportunities: AutomationResult["opportunities"]): string {
+  if (opportunities.length === 0) return `No strategy candidates passed the deterministic scanner (discovered ${discovered} markets).`;
+  const top = opportunities.slice(0, 5).map((item) => {
+    const geminiDetail = `Gemini ${item.decision.decision} confidence=${item.decision.confidence.toFixed(2)} risk=${item.decision.risk}: ${item.decision.reason}`;
+    const reason = item.rejectionReason ? `${item.rejectionReason} ${geminiDetail}` : geminiDetail;
+    return `${item.market.symbol} score=${item.scannerScore}: ${reason}`;
+  }).join(" | ");
   return `No executable opportunity found (discovered ${discovered}). ${top}`;
 }
 
 export async function evaluateAutomation(config: AutomationConfig): Promise<AutomationResult> {
   const result = await runStrategyScan({
     gemini: config.gemini,
-    strategy: config.strategy,
+    strategy: { ...config.strategy, heldPositions: config.heldPositions },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
     allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
@@ -56,32 +45,12 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
   });
 
   const best = result.opportunities.find((item) => item.executable);
-  if (!best) {
-    return {
-      discovered: result.discovered,
-      opportunities: result.opportunities,
-      blockedReason: rejectionSummary(result.discovered, result.opportunities)
-    };
-  }
+  if (!best) return { discovered: result.discovered, opportunities: result.opportunities, blockedReason: rejectionSummary(result.discovered, result.opportunities) };
 
   const decision = best.decision;
   const amountInWei = best.quoteAmountInWei ?? 0n;
-  const gateError = evaluateExecutionGate(
-    {
-      decision,
-      amountInWei,
-      currentExposureWei: 0n
-    },
-    config.risk
-  );
-
-  if (gateError) {
-    return {
-      discovered: result.discovered,
-      opportunities: result.opportunities,
-      blockedReason: gateError
-    };
-  }
+  const gateError = evaluateExecutionGate({ decision, amountInWei, currentExposureWei: 0n, cashToken: config.cashToken }, config.risk);
+  if (gateError) return { discovered: result.discovered, opportunities: result.opportunities, blockedReason: gateError };
 
   const trade: TradeRequest = {
     tokenIn: decision.decision === "BUY" ? config.cashToken : best.market.address,
@@ -89,14 +58,10 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     amountInWei,
     amountOutWei: best.quoteAmountOutWei ?? 0n,
     slippageBps: config.slippageBps,
-    reason: `strategy:${decision.decision.toLowerCase()} score=${best.scannerScore} confidence=${decision.confidence.toFixed(2)}`
+    reason: `strategy:${decision.decision.toLowerCase()} score=${best.scannerScore} confidence=${decision.confidence.toFixed(2)} ${decision.reason}`
   };
 
-  return {
-    discovered: result.discovered,
-    opportunities: result.opportunities,
-    trade
-  };
+  return { discovered: result.discovered, opportunities: result.opportunities, trade };
 }
 
 export function isPaperAutomationSafe(mode: "paper" | "live"): boolean {
