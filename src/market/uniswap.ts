@@ -84,9 +84,12 @@ function marketFromPool(token: UniswapToken, pool: PoolInfo, quoteTokenAddress: 
 export class UniswapTokenProvider {
   constructor(private readonly apiKey: string, private readonly swapper: `0x${string}`) {}
 
-  async discoverBaseTokenAddresses(limit = 20, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
+  async discoverBaseTokenAddresses(limit = 30, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
     if (!this.apiKey) throw new Error("Uniswap API key is not configured.");
-    const requested = Math.min(Math.max(limit, 10), 30);
+    // Uniswap ranked token discovery supports up to the endpoint's documented ranked-token limit.
+    // Keep discovery broad; the deterministic scanner and maxCandidates cap later reduce this to
+    // a small Gemini evaluation set.
+    const requested = Math.min(Math.max(limit, 30), 50);
     const fetchTokens = async (sort: "volume_24h" | "tvl") => {
       const url = new URL(TOKEN_API_URL); url.searchParams.set("sort", sort); url.searchParams.set("limit", String(requested)); url.searchParams.set("chainId", String(CHAIN_ID));
       const response = await fetch(url, { headers: { "x-api-key": this.apiKey, accept: "application/json" } });
@@ -101,7 +104,7 @@ export class UniswapTokenProvider {
       if (address === BASE_USDC.toLowerCase() || address === BASE_WETH.toLowerCase()) continue;
       unique.set(address, token);
     }
-    const markets = [...unique.values()].slice(0, Math.min(requested * 2, 50)).map((token) => ({ address: token.address as `0x${string}`, symbol: token.symbol ?? token.name ?? "UNKNOWN", decimals: Number(token.decimals ?? 18), priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" as const }));
+    const markets = [...unique.values()].slice(0, Math.min(requested * 2, 100)).map((token) => ({ address: token.address as `0x${string}`, symbol: token.symbol ?? token.name ?? "UNKNOWN", decimals: Number(token.decimals ?? 18), priceUsd: 0, liquidityUsd: 0, volume24hUsd: 0, change24hPct: 0, observedAt: Date.now(), dataCompleteness: "quote-only" as const }));
     for (const address of additionalTokenAddresses) {
       if (!isAddress(address) || !isErc20Address(address)) continue;
       const lower = address.toLowerCase();
@@ -113,8 +116,8 @@ export class UniswapTokenProvider {
     return markets;
   }
 
-  async discoverBaseMarkets(limit = 20, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
-    const tokens = await this.discoverBaseTokenAddresses(Math.min(Math.max(limit, 10), 30), additionalTokenAddresses);
+  async discoverBaseMarkets(limit = 30, additionalTokenAddresses: `0x${string}`[] = []): Promise<TokenMarket[]> {
+    const tokens = await this.discoverBaseTokenAddresses(Math.min(Math.max(limit, 30), 50), additionalTokenAddresses);
     const markets: TokenMarket[] = []; const failures: string[] = [];
     const usdcForWeth = await quoteToken(this.apiKey, this.swapper, BASE_WETH, BASE_USDC, DISCOVERY_WETH_AMOUNT_WEI).catch((error) => { failures.push(`WETH/USDC:${error instanceof Error ? error.message : "unknown"}`); return 0n; });
     if (usdcForWeth <= 0n) throw new Error(`Uniswap quote discovery failed. ${failures.join(" | ")}`);
