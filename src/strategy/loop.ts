@@ -44,12 +44,7 @@ export async function evaluateMarkets(
     .filter((market) => (config.heldPositions?.[market.address.toLowerCase()] ?? "0") !== "0")
     .map((market) => {
       const existing = scanned.find((candidate) => candidate.market.address.toLowerCase() === market.address.toLowerCase());
-      return existing ?? {
-        market,
-        score: 100,
-        reasons: ["existing position eligible for exit analysis"],
-        eligible: true
-      };
+      return existing ?? { market, score: 100, reasons: ["existing position eligible for exit analysis"], eligible: true };
     });
   const byAddress = new Map<string, CandidateScore>();
   for (const candidate of [...heldCandidates, ...scanned]) byAddress.set(candidate.market.address.toLowerCase(), candidate);
