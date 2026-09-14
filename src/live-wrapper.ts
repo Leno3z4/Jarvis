@@ -8,6 +8,8 @@ import { LiveExecutor } from "./trading/executor";
 import { validateTrade } from "./trading/risk";
 import type { TradeRequest } from "./trading/types";
 
+export { LiveTradingState } from "./state/live-state";
+
 const NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as `0x${string}`;
 
 function json(body: unknown, init: ResponseInit = {}): Response {
@@ -80,17 +82,18 @@ async function authorizeLiveTrade(env: Env, config: ReturnType<typeof getConfig>
 
 async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
   if (config.mode !== "live") return { executed: false, reason: "Live cycle not selected in paper mode." };
+  const dryRun = config.liveDryRun;
   const missing: string[] = [];
-  if (!config.liveTradingEnabled) missing.push("LIVE_TRADING_ENABLED=true");
+  if (!dryRun && !config.liveTradingEnabled) missing.push("LIVE_TRADING_ENABLED=true");
   if (!config.zeroExApiKey) missing.push("ZEROEX_API_KEY");
   if (!config.liveWalletAddress) missing.push("LIVE_WALLET_ADDRESS");
-  if (!config.livePrivateKey) missing.push("LIVE_PRIVATE_KEY");
+  if (!dryRun && !config.livePrivateKey) missing.push("LIVE_PRIVATE_KEY");
   if (!config.gemini.primaryKey) missing.push("GEMINI_API_KEY");
-  if (missing.length) return { executed: false, reason: "Live automation is fail-closed until explicitly enabled and fully configured.", missing };
+  if (missing.length) return { executed: false, dryRun, reason: "Live automation is not fully configured.", missing };
 
   const positions = await heldPositions(env, config);
   const exposure = await liveExposure(env, config, positions);
-  if (Object.keys(positions).length > 0 && exposure.exposureWei === 0n) return { executed: false, reason: "Live exposure valuation failed; refusing to trade without complete position accounting." };
+  if (Object.keys(positions).length > 0 && exposure.exposureWei === 0n) return { executed: false, dryRun, reason: "Live exposure valuation failed; refusing to trade without complete position accounting." };
 
   const automation = await evaluateAutomation({
     gemini: [
@@ -109,16 +112,26 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
     heldPositions: positions
   });
 
-  if (!automation.trade) return { executed: false, reason: automation.blockedReason ?? "No live trade selected." };
+  if (!automation.trade) return { executed: false, dryRun, reason: automation.blockedReason ?? "No live trade selected." };
   const validation = validateTrade(automation.trade, config.risk, config.liveCashToken);
-  if (validation) return { executed: false, reason: validation };
+  if (validation) return { executed: false, dryRun, reason: validation, trade: automation.trade };
 
   const riskToken = automation.trade.tokenIn.toLowerCase() === config.liveCashToken.toLowerCase() ? automation.trade.tokenOut.toLowerCase() : automation.trade.tokenIn.toLowerCase();
   const tokenExposure = exposure.tokenExposureByAddress[riskToken] ?? 0n;
   const riskResponse = await authorizeLiveTrade(env, config, automation.trade, exposure.exposureWei, tokenExposure, Object.keys(positions).length);
   if (riskResponse) {
     const body = await riskResponse.json() as { reason?: string; error?: string };
-    return { executed: false, reason: body.reason ?? body.error ?? "Live risk gate blocked trade." };
+    return { executed: false, dryRun, reason: body.reason ?? body.error ?? "Live risk gate blocked trade.", trade: automation.trade };
+  }
+
+  if (dryRun) {
+    return {
+      executed: false,
+      dryRun: true,
+      validated: true,
+      reason: "Live dry-run passed strategy, quote, validation, and risk gates; no transaction was sent.",
+      trade: automation.trade
+    };
   }
 
   const executor = new LiveExecutor({ apiKey: config.zeroExApiKey, rpcUrl: config.baseRpcUrl, privateKey: config.livePrivateKey as `0x${string}`, walletAddress: config.liveWalletAddress, enabled: config.liveTradingEnabled });
@@ -138,7 +151,9 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const config = getConfig(env);
-    if (config.mode === "live" && new URL(request.url).pathname === "/strategy/run" && request.method === "POST") {
+    const url = new URL(request.url);
+    if (url.pathname === "/live/trades" && request.method === "GET") return liveStateStub(env).fetch("https://jarvis-live/trades");
+    if (config.mode === "live" && url.pathname === "/strategy/run" && request.method === "POST") {
       try { return json({ ok: true, ...(await runLiveCycle(env, config)) }); }
       catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Live strategy run failed." }, { status: 503 }); }
     }
