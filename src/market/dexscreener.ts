@@ -6,7 +6,7 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const NON_TARGET = new Set(["ETH","WETH","STETH","WSTETH","RETH","WEETH","CBETH","METH","OETH","FRXETH","SFRXETH","EETH","WRSETH","ANKRETH","WBTC","BTC","XBTC","USDC","USDT","DAI","USDBC","USDE","USDS","CBUSD"]);
 const NON_MEME = ["wrapped","staked","restaked","liquid staking","yield","vault","index","governance","oracle","exchange","router","bridge","infrastructure","synthetic","stablecoin","ethereum","bitcoin","chainlink","aave","uniswap","compound","lido","rocket pool","maker","curve"];
 const MEME = [
-  "pepe","doge","shib","floki","bonk","brett","mog","wojak","degen","turbo","toshi","bobo","andy","ponke","neiro","mfer","meme","inu","dog","cat","frog","ape","monkey","penguin","chad","giga","ladys","normie","keycat","npc","higher","keyboard","hamster","goat","panda","bear","bull","duck","mouse","rat","capy","pug","shit","clown","based","blob","ninja","wolf","ski","mochi","bald","tybg","doginme","aerobud","spx","mister","harold","harambe","wojak","smurf","corgi","shark","seal","frog","banana","pizza","fish","trump","maga","elon","grok","kek","cult","degen","higher","chog","tate","simpsons"
+  "pepe","doge","shib","floki","bonk","brett","mog","wojak","degen","turbo","toshi","bobo","andy","ponke","neiro","mfer","meme","inu","dog","cat","frog","ape","monkey","penguin","chad","giga","ladys","normie","keycat","npc","higher","keyboard","hamster","goat","panda","bear","bull","duck","mouse","rat","capy","pug","shit","clown","based","blob","ninja","wolf","ski","mochi","bald","tybg","doginme","aerobud","spx","mister","harold","harambe","smurf","corgi","shark","seal","banana","pizza","fish","trump","maga","elon","grok","kek","cult","chog","tate","simpsons"
 ];
 
 interface DexPair {
@@ -58,8 +58,6 @@ function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
     volumeSpikeRatio: avgHourlyVolumeUsd > 0 ? volume1hUsd / avgHourlyVolumeUsd : 0,
     change1hPct,
     change6hPct,
-    // DexScreener does not provide a recent-high series here; leave this unset
-    // rather than deriving a misleading "near recent high" signal from 1h change.
     dataCompleteness: priceUsd > 0 && liquidityUsd > 0 && volume24hUsd > 0 ? "full" : "liquidity-price-only"
   };
 }
@@ -109,20 +107,24 @@ export class DexScreenerMarketProvider implements MarketProvider {
   async discoverLowCapMemes(minLiquidityUsd: number, maxLiquidityUsd: number, limit = 50): Promise<TokenMarket[]> {
     const pairs: DexPair[] = [];
     const profilePayload = await json<Profile[]>(`${API_BASE}/token-profiles/latest/v1`);
-    const profileAddresses = (profilePayload ?? []).filter((p) => p.chainId === BASE_NETWORK && isAddress(p.tokenAddress)).map((p) => p.tokenAddress!.toLowerCase()).slice(0, 30);
+    const profileAddresses = (profilePayload ?? [])
+      .filter((p) => p.chainId === BASE_NETWORK && isAddress(p.tokenAddress))
+      .map((p) => p.tokenAddress!.toLowerCase())
+      .slice(0, 20);
     if (profileAddresses.length > 0) {
       const profilePairs = await json<DexPair[]>(`${API_BASE}/tokens/v1/${BASE_NETWORK}/${profileAddresses.join(",")}`);
       pairs.push(...(profilePairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
     }
 
-    // Search many Base meme/narrative terms so discovery is not dominated by only
-    // the handful of memes returned by one generic query. Keep this under the
-    // Worker subrequest budget while still covering emerging meme vocabulary.
-    const terms = [
-      "base","meme","pepe","doge","dog","cat","frog","ape","monkey","brett","mog","degen","toshi","based","chad","bonk","inu","wojak","mfer","higher","keycat","normie","npc","bobo","andy","ponke","neiro","floki","turbo","ninja"
-    ];
-    const searchResults = await Promise.all(terms.map((term) => json<DexResponse>(`${API_BASE}/latest/dex/search?q=${encodeURIComponent(term)}`)));
-    for (const result of searchResults) pairs.push(...(result?.pairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
+    // Keep discovery intentionally cheap: one broad Base search plus a few
+    // high-yield meme terms. Gemini and 0x also consume subrequests later in
+    // the same Worker invocation, so dozens of searches can exceed Free-plan
+    // subrequest limits.
+    const terms = ["base", "meme", "brett", "mog", "degen", "toshi", "pepe", "doge"];
+    for (const term of terms) {
+      const result = await json<DexResponse>(`${API_BASE}/latest/dex/search?q=${encodeURIComponent(term)}`);
+      pairs.push(...(result?.pairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
+    }
 
     const best = new Map<string, DexPair>();
     for (const pair of pairs) {
