@@ -5,6 +5,25 @@ const DEFAULT_TEST_TOKEN = "0x4200000000000000000000000000000000000006";
 const GATEWAY_BASE = "https://gateway.thegraph.com/api";
 const MAX_ENRICH_MARKETS = 20;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+const NON_TARGET_SYMBOLS = new Set([
+  "ETH", "WETH", "STETH", "WSTETH", "RETH", "WEETH", "CBETH", "METH", "OETH",
+  "FRXETH", "SFRXETH", "EETH", "WRSETH", "ANKRETH", "WBTC", "BTC", "XBTC",
+  "USDC", "USDT", "DAI", "USDBC", "USDE", "USDS", "CBUSD"
+]);
+
+function isNonTargetSymbol(symbol: string): boolean {
+  const normalized = symbol.trim().toUpperCase();
+  if (NON_TARGET_SYMBOLS.has(normalized)) return true;
+  return normalized.includes("WSTETH")
+    || normalized.includes("WEETH")
+    || normalized.includes("STETH")
+    || normalized.includes("RETH")
+    || normalized.includes("CBETH")
+    || normalized.includes("FRXETH")
+    || normalized.includes("SFRXETH")
+    || normalized.includes("WBTC")
+    || normalized.includes("BTC");
+}
 
 interface GraphHourData { periodStartUnix?: number | string; volumeUSD?: string | number; priceUSD?: string | number; close?: string | number; }
 interface GraphToken {
@@ -147,7 +166,9 @@ export class TheGraphMarketDataProvider {
       const payload = (await response.json()) as GraphResponse;
       if (payload.errors?.length) return [];
       return (payload.data?.tokens ?? [])
-        .filter((token): token is GraphToken & { id: string } => typeof token.id === "string" && ADDRESS_RE.test(token.id))
+        .filter((token): token is GraphToken & { id: string } =>
+          typeof token.id === "string" && ADDRESS_RE.test(token.id) && !isNonTargetSymbol(token.symbol ?? "UNKNOWN")
+        )
         .map((token) => ({
           address: token.id as `0x${string}`,
           symbol: token.symbol ?? "UNKNOWN",
@@ -182,6 +203,7 @@ export class TheGraphMarketDataProvider {
         const payload = (await response.json()) as GraphResponse;
         if (payload.errors?.length) return market;
         const token = payload.data?.token;
+        if (isNonTargetSymbol(token?.symbol ?? market.symbol)) return { ...market, dataCompleteness: "quote-only" as const };
         const rows = (payload.data?.tokenHourDatas ?? [])
           .map((row) => ({ time: numeric(row.periodStartUnix), volume: numeric(row.volumeUSD), price: numeric(row.priceUSD || row.close) }))
           .filter((row) => row.time > 0 && row.price > 0)
