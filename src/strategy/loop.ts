@@ -8,6 +8,9 @@ export interface StrategyLoopConfig extends StrategyConfig {
   minGeminiConfidence: number;
   maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
   cashToken: `0x${string}`;
+  quoteAmountWei: bigint;
+  slippageBps: number;
+  allowQuoteBalanceIssues?: boolean;
   uniswapApiKey?: string;
   theGraphApiKey?: string;
   theGraphUniswapV3SubgraphId?: string;
