@@ -1,4 +1,5 @@
 import { UniswapTokenProvider } from "../market/uniswap";
+import { TheGraphMarketDataProvider } from "../market/thegraph";
 import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
 import type { GeminiCandidate } from "../ai/gemini";
@@ -20,7 +21,16 @@ export async function runStrategyScan(config: {
 
   const limit = Math.min(config.limit ?? 5, 5);
   const uniswap = new UniswapTokenProvider(uniswapApiKey, config.takerAddress);
-  const markets = await uniswap.discoverBaseMarkets(limit);
+  let markets = await uniswap.discoverBaseMarkets(limit);
+
+  if (config.strategy.theGraphApiKey) {
+    const graph = new TheGraphMarketDataProvider(
+      config.strategy.theGraphApiKey,
+      config.strategy.theGraphUniswapV3SubgraphId
+    );
+    markets = await graph.enrichMarkets(markets);
+  }
+
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
 
   const quoteProvider = new ZeroExQuoteProvider(config.zeroExApiKey, config.takerAddress);
