@@ -40,19 +40,39 @@ export async function evaluateMarkets(
   slippageBps = 100
 ): Promise<StrategyOpportunity[]> {
   const scanned = scanMarkets(markets, config);
+  const heldAddresses = new Set(
+    Object.entries(config.heldPositions ?? {})
+      .filter(([, amount]) => amount !== "0")
+      .map(([address]) => address.toLowerCase())
+  );
+
+  // Always analyze held positions for exits, but never let held-position analysis
+  // consume the entry-candidate budget. New meme entries get their own top-N slot.
   const heldCandidates: CandidateScore[] = markets
-    .filter((market) => (config.heldPositions?.[market.address.toLowerCase()] ?? "0") !== "0")
+    .filter((market) => heldAddresses.has(market.address.toLowerCase()))
     .map((market) => {
       const existing = scanned.find((candidate) => candidate.market.address.toLowerCase() === market.address.toLowerCase());
-      return existing ?? { market, score: 100, reasons: ["existing position eligible for exit analysis"], eligible: true };
+      return existing ?? {
+        market,
+        score: 100,
+        reasons: ["existing position eligible for exit analysis"],
+        eligible: true
+      };
     });
+
+  const entryCandidates = scanned
+    .filter((candidate) => !heldAddresses.has(candidate.market.address.toLowerCase()))
+    .slice(0, Math.max(1, config.maxCandidates));
+
   const byAddress = new Map<string, CandidateScore>();
-  for (const candidate of [...heldCandidates, ...scanned]) byAddress.set(candidate.market.address.toLowerCase(), candidate);
-  const candidates = [...byAddress.values()].slice(0, Math.max(1, config.maxCandidates));
+  for (const candidate of [...heldCandidates, ...entryCandidates]) {
+    byAddress.set(candidate.market.address.toLowerCase(), candidate);
+  }
+  const candidates = [...byAddress.values()];
   const results: StrategyOpportunity[] = [];
 
   for (const candidate of candidates) {
-    const positionHeld = (config.heldPositions?.[candidate.market.address.toLowerCase()] ?? "0") !== "0";
+    const positionHeld = heldAddresses.has(candidate.market.address.toLowerCase());
     const analyzed = await analyzeCandidate(candidate, geminiCandidates, { positionHeld });
     const decision = analyzed.decision;
     let executable = decision.decision === "BUY" || decision.decision === "SELL";
