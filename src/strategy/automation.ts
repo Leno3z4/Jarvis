@@ -26,7 +26,7 @@ export interface AutomationResult {
 
 function rejectionSummary(discovered: number, opportunities: AutomationResult["opportunities"]): string {
   if (opportunities.length === 0) {
-    return `No low-cap opportunities passed the deterministic scanner (low-cap markets discovered: ${discovered}). The current entry filter requires $10k-$250k liquidity, >=$2.5k 24h volume, >=1.15x hourly volume expansion, fresh data, non-negative 24h momentum, and a short-term breakout/momentum trigger.`;
+    return `No low-cap meme setup passed the deterministic scanner (meme markets discovered: ${discovered}). Jarvis requires a meme-token identity, $10k-$250k liquidity, active low-cap volume, fresh price data, non-extended momentum, and a minimum scanner score.`;
   }
 
   const top = opportunities.slice(0, 5).map((item) => {
@@ -34,7 +34,7 @@ function rejectionSummary(discovered: number, opportunities: AutomationResult["o
     const reason = item.rejectionReason ? `${item.rejectionReason} ${geminiDetail}` : geminiDetail;
     return `${item.market.symbol} score=${item.scannerScore}: ${reason}`;
   }).join(" | ");
-  return `No executable low-cap opportunity found (discovered ${discovered}). ${top}`;
+  return `No executable low-cap meme opportunity found (discovered ${discovered}). ${top}`;
 }
 
 export async function evaluateAutomation(config: AutomationConfig): Promise<AutomationResult> {
