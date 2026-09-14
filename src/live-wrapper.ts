@@ -19,6 +19,14 @@ function json(body: unknown, init: ResponseInit = {}): Response {
   return Response.json(body, { ...init, headers });
 }
 
+function serializableTrade(trade: TradeRequest) {
+  return {
+    ...trade,
+    amountInWei: trade.amountInWei.toString(),
+    amountOutWei: trade.amountOutWei.toString()
+  };
+}
+
 function liveStateStub(env: Env) {
   return env.LIVE_STATE.get(env.LIVE_STATE.idFromName("main"));
 }
@@ -74,7 +82,7 @@ async function authorizeLiveTrade(env: Env, config: ReturnType<typeof getConfig>
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       cashToken: config.liveCashToken,
-      trade: { ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() },
+      trade: serializableTrade(trade),
       context: { currentExposureWei: exposureWei.toString(), tokenExposureWei: tokenExposureWei.toString(), openPositions, nowMs: Date.now() },
       limits: { maxTradeWei: limits.maxTradeWei.toString(), maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(), maxTokenExposureWei: limits.maxTokenExposureWei.toString(), maxOpenPositions: limits.maxOpenPositions, maxTradesPerDay: limits.maxTradesPerDay, cooldownSeconds: limits.cooldownSeconds, maxDailyLossWei: limits.maxDailyLossWei.toString() }
     })
@@ -116,14 +124,14 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
 
   if (!automation.trade) return { executed: false, dryRun, reason: automation.blockedReason ?? "No live trade selected." };
   const validation = validateTrade(automation.trade, config.risk, config.liveCashToken);
-  if (validation) return { executed: false, dryRun, reason: validation, trade: automation.trade };
+  if (validation) return { executed: false, dryRun, reason: validation, trade: serializableTrade(automation.trade) };
 
   const riskToken = automation.trade.tokenIn.toLowerCase() === config.liveCashToken.toLowerCase() ? automation.trade.tokenOut.toLowerCase() : automation.trade.tokenIn.toLowerCase();
   const tokenExposure = exposure.tokenExposureByAddress[riskToken] ?? 0n;
   const riskResponse = await authorizeLiveTrade(env, config, automation.trade, exposure.exposureWei, tokenExposure, Object.keys(positions).length, dryRun);
   if (riskResponse) {
     const body = await riskResponse.json() as { reason?: string; error?: string };
-    return { executed: false, dryRun, reason: body.reason ?? body.error ?? "Live risk gate blocked trade.", trade: automation.trade };
+    return { executed: false, dryRun, reason: body.reason ?? body.error ?? "Live risk gate blocked trade.", trade: serializableTrade(automation.trade) };
   }
 
   if (dryRun) {
@@ -132,13 +140,13 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
       dryRun: true,
       validated: true,
       reason: "Live dry-run passed strategy, quote, validation, and non-mutating risk gates; no transaction was sent.",
-      trade: automation.trade
+      trade: serializableTrade(automation.trade)
     };
   }
 
   const executor = new LiveExecutor({ apiKey: config.zeroExApiKey, rpcUrl: config.baseRpcUrl, privateKey: config.livePrivateKey as `0x${string}`, walletAddress: config.liveWalletAddress, enabled: config.liveTradingEnabled });
   const result = await executor.execute(automation.trade);
-  if (result.status !== "submitted") return { executed: false, reason: result.message ?? "Live execution rejected.", trade: automation.trade };
+  if (result.status !== "submitted") return { executed: false, reason: result.message ?? "Live execution rejected.", trade: serializableTrade(automation.trade) };
 
   const recordResponse = await liveStateStub(env).fetch(new Request("https://jarvis-live/record", {
     method: "POST",
@@ -147,7 +155,7 @@ async function runLiveCycle(env: Env, config: ReturnType<typeof getConfig>) {
   }));
   if (!recordResponse.ok) return { executed: false, reason: "Live swap submitted but persistent live state could not be recorded; refusing to treat the cycle as complete.", txHash: result.txHash };
 
-  return { executed: true, trade: automation.trade, txHash: result.txHash, message: result.message };
+  return { executed: true, trade: serializableTrade(automation.trade), txHash: result.txHash, message: result.message };
 }
 
 export default {
