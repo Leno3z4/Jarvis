@@ -77,6 +77,7 @@ async function authorizePaperTrade(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        cashToken: config.paperCashToken,
         trade: {
           ...trade,
           amountInWei: trade.amountInWei.toString(),
@@ -156,7 +157,9 @@ async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
   if (riskResponse) {
     return {
       executed: false,
-      reason: (await riskResponse.json() as { reason?: string }).reason ?? "Risk gate blocked trade."
+      reason: (await riskResponse.json() as { reason?: string; error?: string }).reason
+        ?? (await Promise.resolve(riskResponse.clone().json()) as Promise<{ error?: string }>).then((body) => body.error ?? "Risk gate blocked trade.")
+        ?? "Risk gate blocked trade."
     };
   }
 
