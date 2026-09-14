@@ -1,5 +1,4 @@
 import { UniswapTokenProvider } from "../market/uniswap";
-import { DexScreenerMarketProvider } from "../market/dexscreener";
 import { TheGraphMarketDataProvider } from "../market/thegraph";
 import { ZeroExQuoteProvider } from "../market/zeroex";
 import { evaluateMarkets, type StrategyOpportunity, type StrategyLoopConfig } from "./loop";
@@ -23,20 +22,21 @@ export async function runStrategyScan(config: {
     .map(([address]) => address as `0x${string}`);
 
   const discoveredTokens = await uniswap.discoverBaseTokenAddresses(limit, heldTokenAddresses);
-  const addresses = discoveredTokens.map((token) => token.address as `0x${string}`);
-  const marketProvider = new DexScreenerMarketProvider();
-  let markets = await marketProvider.getTokens(addresses);
-
-  const known = new Set(markets.map((market) => market.address.toLowerCase()));
-  const missingHeld = heldTokenAddresses.filter((address) => !known.has(address.toLowerCase()));
-  if (missingHeld.length > 0) {
-    const heldMarkets = await Promise.all(missingHeld.slice(0, 3).map((address) => marketProvider.getToken(address)));
-    markets = [...markets, ...heldMarkets];
-  }
+  let markets = discoveredTokens.map((token) => ({
+    address: token.address as `0x${string}`,
+    symbol: token.symbol ?? "UNKNOWN",
+    decimals: Number(token.decimals ?? 18),
+    priceUsd: 0,
+    liquidityUsd: 0,
+    volume24hUsd: 0,
+    change24hPct: 0,
+    observedAt: Date.now(),
+    dataCompleteness: "quote-only" as const
+  }));
 
   if (config.strategy.theGraphApiKey && markets.length > 0) {
     const graph = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId);
-    markets = await graph.enrichMarkets(markets.slice(0, 10));
+    markets = await graph.enrichMarkets(markets);
   }
 
   if (markets.length === 0) return { opportunities: [], discovered: 0 };
