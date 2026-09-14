@@ -41,7 +41,7 @@ export async function evaluateAutomation(config: AutomationConfig): Promise<Auto
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
     allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
-    limit: config.strategy.maxCandidates * 6
+    limit: Math.min(config.strategy.maxCandidates, 10)
   });
 
   const best = result.opportunities.find((item) => item.executable);
