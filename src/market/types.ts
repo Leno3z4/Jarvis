@@ -5,6 +5,8 @@ export interface TokenMarket {
   decimals: number;
   priceUsd: number;
   liquidityUsd: number;
+  marketCapUsd?: number;
+  fdvUsd?: number;
   volume24hUsd: number;
   change24hPct: number;
   observedAt: number;
