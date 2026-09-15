@@ -8,6 +8,7 @@ export interface StrategyConfig {
   minScore: number;
   lowCapMinLiquidityUsd?: number;
   lowCapMaxLiquidityUsd?: number;
+  lowCapMaxMarketCapUsd?: number;
   lowCapMinVolume24hUsd?: number;
   lowCapMinVolumeToLiquidity?: number;
 }
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG: StrategyConfig = {
   minScore: 60,
   lowCapMinLiquidityUsd: 10_000,
   lowCapMaxLiquidityUsd: 250_000,
+  lowCapMaxMarketCapUsd: 250_000,
   lowCapMinVolume24hUsd: 1_500,
   lowCapMinVolumeToLiquidity: 0.04
 };
@@ -46,7 +48,8 @@ const NON_MEME_TERMS = [
   "wrapped", "staked", "restaked", "liquid staking", "yield", "vault", "index",
   "governance", "oracle", "exchange", "router", "bridge", "infrastructure", "synthetic",
   "stablecoin", "usd", "usdc", "usdt", "ethereum", "bitcoin", "chainlink", "aave", "uniswap",
-  "compound", "lido", "rocket pool", "maker", "curve"
+  "compound", "lido", "rocket pool", "maker", "curve", "protocol", "lending", "borrow",
+  "perp", "derivative", "liquidity", "dao", "finance", "swap"
 ];
 
 function isNonTargetAsset(symbol: string): boolean {
@@ -64,10 +67,14 @@ function isNonTargetAsset(symbol: string): boolean {
     || normalized.includes("BTC");
 }
 
-function isMemeToken(market: TokenMarket): boolean {
+function hasMemeNarrative(market: TokenMarket): boolean {
   const text = `${market.name ?? ""} ${market.symbol}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   if (NON_MEME_TERMS.some((term) => text.includes(term))) return false;
-  return MEME_TERMS.some((term) => text.includes(term));
+  const knownMeme = MEME_TERMS.some((term) => text.includes(term));
+  // Unknown names are allowed through the deterministic scanner when they
+  // otherwise fit the very-low-cap envelope; Gemini then decides whether the
+  // asset actually has a meme narrative worth trading.
+  return knownMeme || Boolean(market.marketCapUsd && market.marketCapUsd > 0 && market.marketCapUsd <= 250_000);
 }
 
 export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAULT_CONFIG): CandidateScore {
@@ -75,25 +82,31 @@ export function scoreMarket(market: TokenMarket, config: StrategyConfig = DEFAUL
   let score = 0;
   const lowCapMinLiquidity = config.lowCapMinLiquidityUsd ?? 10_000;
   const lowCapMaxLiquidity = config.lowCapMaxLiquidityUsd ?? 250_000;
+  const lowCapMaxMarketCap = config.lowCapMaxMarketCapUsd ?? 250_000;
   const lowCapMinVolume = config.lowCapMinVolume24hUsd ?? 1_500;
   const nonTargetAsset = isNonTargetAsset(market.symbol);
-  const memeToken = isMemeToken(market);
+  const memeToken = hasMemeNarrative(market);
+  const hasMarketCap = market.marketCapUsd !== undefined && market.marketCapUsd > 0;
   const isLowCapCandidate = market.liquidityUsd >= lowCapMinLiquidity
     && market.liquidityUsd <= lowCapMaxLiquidity
     && market.volume24hUsd >= lowCapMinVolume
+    && hasMarketCap
+    && market.marketCapUsd! <= lowCapMaxMarketCap
     && market.liquidityUsd > 0;
 
   if (nonTargetAsset) reasons.push("non-target settlement/blue-chip asset");
-  if (memeToken) { score += 20; reasons.push("meme-token identity"); }
-  else reasons.push("not identified as a meme token");
+  if (memeToken) { score += 20; reasons.push("meme-token candidate"); }
+  else reasons.push("excluded/non-meme narrative");
 
   if (market.dataCompleteness === "quote-only") {
     reasons.push("market data incomplete");
   } else {
-    if (isLowCapCandidate) { score += 25; reasons.push("low-cap liquidity tier"); }
-    else reasons.push("outside low-cap liquidity band");
+    if (isLowCapCandidate) { score += 25; reasons.push("sub-$250k market-cap entry tier"); }
+    else if (!hasMarketCap) reasons.push("market cap unavailable; entry blocked");
+    else if (market.marketCapUsd! > lowCapMaxMarketCap) reasons.push("market cap above entry ceiling");
+    else reasons.push("outside low-cap entry band");
 
-    if (market.volume24hUsd >= config.minVolume24hUsd) { score += 25; reasons.push("sufficient 24h volume"); }
+    if (isLowCapCandidate && market.volume24hUsd >= config.minVolume24hUsd) { score += 25; reasons.push("sufficient 24h volume"); }
     else if (isLowCapCandidate && market.volume24hUsd >= lowCapMinVolume) { score += 15; reasons.push("active low-cap volume"); }
     else reasons.push("volume below low-cap floor");
 
