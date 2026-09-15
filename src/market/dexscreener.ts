@@ -4,10 +4,7 @@ const API_BASE = "https://api.dexscreener.com";
 const BASE_NETWORK = "base";
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const NON_TARGET = new Set(["ETH","WETH","STETH","WSTETH","RETH","WEETH","CBETH","METH","OETH","FRXETH","SFRXETH","EETH","WRSETH","ANKRETH","WBTC","BTC","XBTC","USDC","USDT","DAI","USDBC","USDE","USDS","CBUSD"]);
-const NON_MEME = ["wrapped","staked","restaked","liquid staking","yield","vault","index","governance","oracle","exchange","router","bridge","infrastructure","synthetic","stablecoin","ethereum","bitcoin","chainlink","aave","uniswap","compound","lido","rocket pool","maker","curve"];
-const MEME = [
-  "pepe","doge","shib","floki","bonk","brett","mog","wojak","degen","turbo","toshi","bobo","andy","ponke","neiro","mfer","meme","inu","dog","cat","frog","ape","monkey","penguin","chad","giga","ladys","normie","keycat","npc","higher","keyboard","hamster","goat","panda","bear","bull","duck","mouse","rat","capy","pug","shit","clown","based","blob","ninja","wolf","ski","mochi","bald","tybg","doginme","aerobud","spx","mister","harold","harambe","smurf","corgi","shark","seal","banana","pizza","fish","trump","maga","elon","grok","kek","cult","chog","tate","simpsons"
-];
+const NON_MEME = ["wrapped","staked","restaked","liquid staking","yield","vault","index","governance","oracle","exchange","router","bridge","infrastructure","synthetic","stablecoin","ethereum","bitcoin","chainlink","aave","uniswap","compound","lido","rocket pool","maker","curve","protocol","lending","borrow","perp","derivative","liquidity","dao","finance","swap"];
 
 interface DexPair {
   chainId?: string;
@@ -30,7 +27,6 @@ function isAddress(value: unknown): value is `0x${string}` { return typeof value
 function num(value: unknown): number { const parsed = Number(value ?? 0); return Number.isFinite(parsed) ? parsed : 0; }
 function text(name = "", symbol = "", description = ""): string { return `${name} ${symbol} ${description}`.toLowerCase().replace(/[^a-z0-9]+/g, " "); }
 function excluded(name = "", symbol = "", description = ""): boolean { const upper = symbol.trim().toUpperCase(); if (NON_TARGET.has(upper)) return true; const t = text(name, symbol, description); return NON_MEME.some((term) => t.includes(term)); }
-function meme(name = "", symbol = "", description = ""): boolean { const t = text(name, symbol, description); return !NON_MEME.some((term) => t.includes(term)) && MEME.some((term) => t.includes(term)); }
 
 function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
   const tokenIsBase = pair.baseToken?.address?.toLowerCase() === address.toLowerCase();
@@ -43,6 +39,7 @@ function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
   const change1hPct = num(pair.priceChange?.h1);
   const change6hPct = num(pair.priceChange?.h6);
   const change24hPct = num(pair.priceChange?.h24);
+  const marketCapUsd = num(pair.marketCap) || num(pair.fdv);
   return {
     address,
     symbol: token?.symbol ?? token?.name ?? "UNKNOWN",
@@ -50,6 +47,8 @@ function marketFromPair(pair: DexPair, address: `0x${string}`): TokenMarket {
     decimals: 18,
     priceUsd,
     liquidityUsd,
+    marketCapUsd: marketCapUsd > 0 ? marketCapUsd : undefined,
+    fdvUsd: num(pair.fdv) > 0 ? num(pair.fdv) : undefined,
     volume24hUsd,
     change24hPct,
     observedAt: Date.now(),
@@ -116,11 +115,10 @@ export class DexScreenerMarketProvider implements MarketProvider {
       pairs.push(...(profilePairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
     }
 
-    // Keep discovery intentionally cheap: one broad Base search plus a few
-    // high-yield meme terms. Gemini and 0x also consume subrequests later in
-    // the same Worker invocation, so dozens of searches can exceed Free-plan
-    // subrequest limits.
-    const terms = ["base", "meme", "brett", "mog", "degen", "toshi", "pepe", "doge"];
+    // Broad discovery: don't require a known meme keyword. The later engine
+    // hard-excludes protocol/DeFi/settlement terms and enforces the low-cap
+    // entry ceiling. Keep request count bounded for the Worker invocation.
+    const terms = ["base", "meme", "doge", "pepe", "cat", "frog"];
     for (const term of terms) {
       const result = await json<DexResponse>(`${API_BASE}/latest/dex/search?q=${encodeURIComponent(term)}`);
       pairs.push(...(result?.pairs ?? []).filter((p) => p.chainId === BASE_NETWORK));
@@ -134,7 +132,7 @@ export class DexScreenerMarketProvider implements MarketProvider {
       const symbol = token.symbol ?? "";
       const liquidity = num(pair.liquidity?.usd);
       const volume24h = num(pair.volume?.h24);
-      if (excluded(name, symbol) || !meme(name, symbol) || liquidity < minLiquidityUsd || liquidity > maxLiquidityUsd || volume24h <= 0) continue;
+      if (excluded(name, symbol) || liquidity < minLiquidityUsd || liquidity > maxLiquidityUsd || volume24h <= 0) continue;
       const key = token.address.toLowerCase();
       const old = best.get(key);
       if (!old || liquidity > num(old.liquidity?.usd) || volume24h > num(old.volume?.h24)) best.set(key, pair);
