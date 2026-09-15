@@ -40,6 +40,7 @@ export interface Env {
   STRATEGY_SLIPPAGE_BPS?: string;
   STRATEGY_LOW_CAP_MIN_LIQUIDITY_USD?: string;
   STRATEGY_LOW_CAP_MAX_LIQUIDITY_USD?: string;
+  STRATEGY_LOW_CAP_MAX_MARKET_CAP_USD?: string;
   STRATEGY_LOW_CAP_MIN_VOLUME_USD?: string;
   STRATEGY_LOW_CAP_MIN_VOLUME_LIQUIDITY?: string;
   BOT_STATE: DurableObjectNamespace;
@@ -65,7 +66,7 @@ export interface JarvisConfig {
     minLiquidityUsd: number; minVolume24hUsd: number; minChange24hPct: number; maxChange24hPct: number;
     minScore: number; maxCandidates: number; minGeminiConfidence: number; maxGeminiRisk: "LOW" | "MEDIUM" | "HIGH";
     quoteAmountWei: bigint; slippageBps: number; allowQuoteBalanceIssues: boolean;
-    lowCapMinLiquidityUsd: number; lowCapMaxLiquidityUsd: number; lowCapMinVolume24hUsd: number; lowCapMinVolumeToLiquidity: number;
+    lowCapMinLiquidityUsd: number; lowCapMaxLiquidityUsd: number; lowCapMaxMarketCapUsd: number; lowCapMinVolume24hUsd: number; lowCapMinVolumeToLiquidity: number;
     uniswapApiKey?: string; theGraphApiKey?: string; theGraphApiKeySource: "env" | "process.env" | "missing"; theGraphUniswapV3SubgraphId?: string;
   };
 }
@@ -106,7 +107,7 @@ export function getConfig(env: Env): JarvisConfig {
       minLiquidityUsd: numberEnv(env.STRATEGY_MIN_LIQUIDITY_USD, 50_000), minVolume24hUsd: numberEnv(env.STRATEGY_MIN_VOLUME_USD, 10_000), minChange24hPct: numberEnv(env.STRATEGY_MIN_CHANGE_PCT, 2), maxChange24hPct: numberEnv(env.STRATEGY_MAX_CHANGE_PCT, 50), minScore: numberEnv(env.STRATEGY_MIN_SCORE, 60),
       maxCandidates: Math.max(1, intEnv(env.STRATEGY_MAX_CANDIDATES, 10)), minGeminiConfidence: numberEnv(env.STRATEGY_MIN_CONFIDENCE, 0.70), maxGeminiRisk: env.STRATEGY_MAX_RISK ?? "MEDIUM",
       quoteAmountWei: bigintEnv(env.STRATEGY_QUOTE_AMOUNT_WEI, 10000000000000000n, "STRATEGY_QUOTE_AMOUNT_WEI"), slippageBps: Math.max(1, Math.min(500, intEnv(env.STRATEGY_SLIPPAGE_BPS, 100))), allowQuoteBalanceIssues: mode === "paper",
-      lowCapMinLiquidityUsd: numberEnv(env.STRATEGY_LOW_CAP_MIN_LIQUIDITY_USD, 10_000), lowCapMaxLiquidityUsd: numberEnv(env.STRATEGY_LOW_CAP_MAX_LIQUIDITY_USD, 250_000), lowCapMinVolume24hUsd: numberEnv(env.STRATEGY_LOW_CAP_MIN_VOLUME_USD, 2_500), lowCapMinVolumeToLiquidity: numberEnv(env.STRATEGY_LOW_CAP_MIN_VOLUME_LIQUIDITY, 0.10),
+      lowCapMinLiquidityUsd: numberEnv(env.STRATEGY_LOW_CAP_MIN_LIQUIDITY_USD, 10_000), lowCapMaxLiquidityUsd: numberEnv(env.STRATEGY_LOW_CAP_MAX_LIQUIDITY_USD, 250_000), lowCapMaxMarketCapUsd: numberEnv(env.STRATEGY_LOW_CAP_MAX_MARKET_CAP_USD, 250_000), lowCapMinVolume24hUsd: numberEnv(env.STRATEGY_LOW_CAP_MIN_VOLUME_USD, 1_500), lowCapMinVolumeToLiquidity: numberEnv(env.STRATEGY_LOW_CAP_MIN_VOLUME_LIQUIDITY, 0.04),
       uniswapApiKey: env.UNISWAP_API_KEY, theGraphApiKey: graphSecret.value, theGraphApiKeySource: graphSecret.source, theGraphUniswapV3SubgraphId: env.THE_GRAPH_UNISWAP_V3_SUBGRAPH_ID ?? DEFAULT_UNISWAP_V3_SUBGRAPH_ID
     }
   };
