@@ -55,10 +55,9 @@ function jsonSafeTrade(trade: TradeRequest): TradeRequest {
 export async function evaluateAutomation(config: AutomationConfig): Promise<AutomationResult> {
   const result = await runStrategyScan({
     gemini: config.gemini,
-    strategy: { ...config.strategy, heldPositions: config.heldPositions },
+    strategy: { ...config.strategy, heldPositions: config.heldPositions, allowQuoteBalanceIssues: config.allowQuoteBalanceIssues ?? config.strategy.allowQuoteBalanceIssues },
     zeroExApiKey: config.zeroExApiKey,
     takerAddress: config.takerAddress,
-    allowQuoteBalanceIssues: config.allowQuoteBalanceIssues,
     limit: Math.min(Math.max(config.strategy.maxCandidates, 30), 50)
   });
 
