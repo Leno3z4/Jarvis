@@ -13,21 +13,20 @@ export async function runStrategyScan(config: { gemini: GeminiCandidate[]; strat
   if (!config.zeroExApiKey || !config.takerAddress) throw new Error("0x API key and taker address are required for strategy evaluation.");
 
   const limit = Math.min(Math.max(config.limit ?? 30, 30), 50);
+  const lowCapMinLiquidity = config.strategy.lowCapMinLiquidityUsd ?? 10_000;
+  const lowCapMaxLiquidity = config.strategy.lowCapMaxLiquidityUsd ?? 250_000;
   const heldTokenAddresses = Object.entries(config.strategy.heldPositions ?? {}).filter(([, amount]) => amount !== "0").map(([address]) => address as `0x${string}`);
   const dex = new DexScreenerMarketProvider();
 
-  // DexScreener is the primary discovery source because its public API exposes
-  // live Base pair liquidity, volume and short-term price-change fields directly.
-  // The Graph remains available as a fallback if DexScreener returns nothing.
   let discoveredTokens: TokenMarket[] = await dex.discoverLowCapMemes(
-    config.strategy.lowCapMinLiquidityUsd,
-    config.strategy.lowCapMaxLiquidityUsd,
+    lowCapMinLiquidity,
+    lowCapMaxLiquidity,
     Math.min(Math.max(limit * 2, 40), 100)
   );
 
   if (discoveredTokens.length === 0 && config.strategy.theGraphApiKey) {
     const graph = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey, config.strategy.theGraphUniswapV3SubgraphId);
-    discoveredTokens = await graph.discoverLowCapMarkets(config.strategy.lowCapMinLiquidityUsd, config.strategy.lowCapMaxLiquidityUsd, Math.min(Math.max(limit * 2, 40), 100));
+    discoveredTokens = await graph.discoverLowCapMarkets(lowCapMinLiquidity, lowCapMaxLiquidity, Math.min(Math.max(limit * 2, 40), 100));
     if (discoveredTokens.length > 0) discoveredTokens = await graph.enrichMarkets(discoveredTokens);
   }
 
@@ -43,7 +42,5 @@ export async function runStrategyScan(config: { gemini: GeminiCandidate[]; strat
 }
 
 function enrichedForStrategy(markets: TokenMarket[]): TokenMarket[] {
-  // DexScreener already supplies the live price/liquidity/volume/momentum fields
-  // needed by the deterministic scanner, so do not make another enrichment API call.
   return markets;
 }
