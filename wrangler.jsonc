@@ -7,6 +7,7 @@
   "observability": { "enabled": true },
   "keep_vars": true,
   "vars": {
+    "TRADING_MODE": "paper",
     "PAPER_TAKER_ADDRESS": "0x7aCd7C622a87a148CcdEBd213D7C4070E200186F"
   },
   "secrets": {
