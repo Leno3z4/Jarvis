@@ -13,85 +13,28 @@ function json(body: unknown, init: ResponseInit = {}): Response { const headers 
 function parseTrade(body: TradePayload): TradeRequest { return { tokenIn: body.tokenIn, tokenOut: body.tokenOut, amountInWei: BigInt(body.amountInWei), amountOutWei: BigInt(body.amountOutWei), slippageBps: body.slippageBps, reason: body.reason, idempotencyKey: body.idempotencyKey }; }
 function stateStub(env: Env) { return env.BOT_STATE.get(env.BOT_STATE.idFromName("main")); }
 function riskStub(env: Env) { return env.RISK_STATE.get(env.RISK_STATE.idFromName("main")); }
-async function getPaperPortfolio(env: Env, config: ReturnType<typeof getConfig>) {
-  const response = await stateStub(env).fetch(`https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`);
-  if (!response.ok) throw new Error("Portfolio state unavailable.");
-  return response.json() as Promise<{ cashWei: string; positions: Record<string, string>; costBasisWei?: Record<string, string>; realizedPnlWei: string }>;
-}
-async function authorizePaperTrade(env: Env, config: ReturnType<typeof getConfig>, trade: TradeRequest): Promise<Response | null> {
-  const portfolio = await getPaperPortfolio(env, config);
-  const costBasis = portfolio.costBasisWei ?? {};
-  const exposure = Object.values(costBasis).reduce((sum, value) => sum + BigInt(value), 0n);
-  const isBuy = trade.tokenIn.toLowerCase() === config.paperCashToken.toLowerCase();
-  if (isBuy && BigInt(portfolio.cashWei) < trade.amountInWei) return json({ ok: false, reason: `Insufficient paper cash: have ${portfolio.cashWei}, need ${trade.amountInWei}.` }, { status: 409 });
-  const riskToken = (isBuy ? trade.tokenOut : trade.tokenIn).toLowerCase();
-  const tokenExposure = BigInt(costBasis[riskToken] ?? "0");
-  const limits = config.risk;
-  const response = await riskStub(env).fetch(new Request("https://jarvis-risk/authorize", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      cashToken: config.paperCashToken,
-      trade: { ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() },
-      context: { currentExposureWei: exposure.toString(), tokenExposureWei: tokenExposure.toString(), openPositions: Object.keys(portfolio.positions).length, nowMs: Date.now() },
-      limits: { maxTradeWei: limits.maxTradeWei.toString(), maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(), maxTokenExposureWei: limits.maxTokenExposureWei.toString(), maxOpenPositions: limits.maxOpenPositions, maxTradesPerDay: limits.maxTradesPerDay, cooldownSeconds: limits.cooldownSeconds, maxDailyLossWei: limits.maxDailyLossWei.toString() }
-    })
-  }));
-  return response.ok ? null : response;
-}
-async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) {
-  const missing: string[] = [];
-  if (config.mode !== "paper") missing.push("TRADING_MODE=paper");
-  if (!config.zeroExApiKey) missing.push("ZEROEX_API_KEY");
-  if (!config.paperTakerAddress) missing.push("PAPER_TAKER_ADDRESS");
-  if (!config.gemini.primaryKey) missing.push("GEMINI_API_KEY");
-  if (missing.length > 0) return { executed: false, reason: "Paper automation is not fully configured.", missing };
-  let result: Awaited<ReturnType<typeof evaluateAutomation>>;
-  try {
-    const portfolio = await getPaperPortfolio(env, config);
-    const heldPositions = Object.fromEntries(Object.entries(portfolio.positions).filter(([, amount]) => BigInt(amount) > 0n));
-    result = await evaluateAutomation({
-      gemini: [{ role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel }, { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model }, { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }],
-      strategy: { ...config.strategy, cashToken: config.paperCashToken, uniswapApiKey: env.UNISWAP_API_KEY, theGraphApiKey: config.strategy.theGraphApiKey, theGraphUniswapV3SubgraphId: config.strategy.theGraphUniswapV3SubgraphId, heldPositions },
-      zeroExApiKey: config.zeroExApiKey, takerAddress: config.paperTakerAddress, cashToken: config.paperCashToken, quoteAmountWei: config.strategy.quoteAmountWei,
-      slippageBps: config.strategy.slippageBps, risk: config.risk, allowQuoteBalanceIssues: config.strategy.allowQuoteBalanceIssues, heldPositions
-    });
-  } catch (error) { throw new Error(`strategy/evaluateAutomation: ${error instanceof Error ? error.message : "unknown error"}`); }
-  if (!result.trade) return { executed: false, reason: result.blockedReason ?? "No trade selected." };
-  const validation = validateTrade(result.trade, config.risk, config.paperCashToken); if (validation) return { executed: false, reason: validation };
-  let riskResponse: Response | null;
-  try { riskResponse = await authorizePaperTrade(env, config, result.trade); } catch (error) { throw new Error(`paper/authorizeRisk: ${error instanceof Error ? error.message : "unknown error"}`); }
-  if (riskResponse) { const body = await riskResponse.json() as { reason?: string; error?: string }; return { executed: false, reason: body.reason ?? body.error ?? "Risk gate blocked trade." }; }
-  let response: Response;
-  try { response = await stateStub(env).fetch(new Request(`https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST", body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value), headers: { "content-type": "application/json" } })); }
-  catch (error) { throw new Error(`paper/execute: ${error instanceof Error ? error.message : "unknown error"}`); }
-  if (!response.ok) { const body = await response.json().catch(() => null) as { error?: string } | null; return { executed: false, reason: body?.error ?? "Paper execution rejected.", trade: result.trade }; }
-  return { executed: true, trade: result.trade };
-}
+function serializeTrade(request: TradeRequest) { return { tokenIn: request.tokenIn, tokenOut: request.tokenOut, amountInWei: request.amountInWei.toString(), amountOutWei: request.amountOutWei.toString(), slippageBps: request.slippageBps, reason: request.reason }; }
+function serializeAutomationResult(result: Awaited<ReturnType<typeof evaluateAutomation>>, phase: string) { return { discovered: result.discovered, opportunities: result.opportunities.map((opportunity) => ({ market: opportunity.market, scannerScore: opportunity.scannerScore, scannerReasons: opportunity.scannerReasons, decision: opportunity.decision, quoteAmountInWei: opportunity.quoteAmountInWei?.toString(), quoteAmountOutWei: opportunity.quoteAmountOutWei?.toString(), provider: opportunity.provider, executable: opportunity.executable, rejectionReason: opportunity.rejectionReason })), blockedReason: result.blockedReason, trade: result.trade ? serializeTrade(result.trade) : undefined, automationPhase: phase, automationAt: new Date().toISOString() }; }
+async function persistAutomationResult(env: Env, result: Awaited<ReturnType<typeof evaluateAutomation>>, phase: string): Promise<void> { const response = await stateStub(env).fetch(new Request("https://jarvis.internal/strategy/store", { method: "POST", body: JSON.stringify(serializeAutomationResult(result, phase)), headers: { "content-type": "application/json" } })); if (!response.ok) throw new Error("Failed to persist automation cycle telemetry."); }
+async function getPaperPortfolio(env: Env, config: ReturnType<typeof getConfig>) { const response = await stateStub(env).fetch(`https://jarvis.internal/portfolio?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`); if (!response.ok) throw new Error("Portfolio state unavailable."); return response.json() as Promise<{ cashWei: string; positions: Record<string, string>; costBasisWei?: Record<string, string>; realizedPnlWei: string }>; }
+async function authorizePaperTrade(env: Env, config: ReturnType<typeof getConfig>, trade: TradeRequest): Promise<Response | null> { const portfolio = await getPaperPortfolio(env, config); const costBasis = portfolio.costBasisWei ?? {}; const exposure = Object.values(costBasis).reduce((sum, value) => sum + BigInt(value), 0n); const isBuy = trade.tokenIn.toLowerCase() === config.paperCashToken.toLowerCase(); if (isBuy && BigInt(portfolio.cashWei) < trade.amountInWei) return json({ ok: false, reason: `Insufficient paper cash: have ${portfolio.cashWei}, need ${trade.amountInWei}.` }, { status: 409 }); const riskToken = (isBuy ? trade.tokenOut : trade.tokenIn).toLowerCase(); const tokenExposure = BigInt(costBasis[riskToken] ?? "0"); const limits = config.risk; const response = await riskStub(env).fetch(new Request("https://jarvis-risk/authorize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cashToken: config.paperCashToken, trade: { ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() }, context: { currentExposureWei: exposure.toString(), tokenExposureWei: tokenExposure.toString(), openPositions: Object.keys(portfolio.positions).length, nowMs: Date.now() }, limits: { maxTradeWei: limits.maxTradeWei.toString(), maxPortfolioExposureWei: limits.maxPortfolioExposureWei.toString(), maxTokenExposureWei: limits.maxTokenExposureWei.toString(), maxOpenPositions: limits.maxOpenPositions, maxTradesPerDay: limits.maxTradesPerDay, cooldownSeconds: limits.cooldownSeconds, maxDailyLossWei: limits.maxDailyLossWei.toString() } }) })); return response.ok ? null : response; }
+async function runPaperCycle(env: Env, config: ReturnType<typeof getConfig>) { const missing: string[] = []; if (config.mode !== "paper") missing.push("TRADING_MODE=paper"); if (!config.zeroExApiKey) missing.push("ZEROEX_API_KEY"); if (!config.paperTakerAddress) missing.push("PAPER_TAKER_ADDRESS"); if (!config.gemini.primaryKey) missing.push("GEMINI_API_KEY"); if (missing.length > 0) return { executed: false, reason: "Paper automation is not fully configured.", missing }; let result: Awaited<ReturnType<typeof evaluateAutomation>>; try { const portfolio = await getPaperPortfolio(env, config); const heldPositions = Object.fromEntries(Object.entries(portfolio.positions).filter(([, amount]) => BigInt(amount) > 0n)); result = await evaluateAutomation({ gemini: [{ role: "primary", apiKey: config.gemini.primaryKey, model: config.gemini.primaryModel }, { role: "fallback1", apiKey: config.gemini.fallback1Key, model: config.gemini.fallback1Model }, { role: "fallback2", apiKey: config.gemini.fallback2Key, model: config.gemini.fallback2Model }], strategy: { ...config.strategy, cashToken: config.paperCashToken, uniswapApiKey: env.UNISWAP_API_KEY, theGraphApiKey: config.strategy.theGraphApiKey, theGraphUniswapV3SubgraphId: config.strategy.theGraphUniswapV3SubgraphId, heldPositions }, zeroExApiKey: config.zeroExApiKey, takerAddress: config.paperTakerAddress, cashToken: config.paperCashToken, quoteAmountWei: config.strategy.quoteAmountWei, slippageBps: config.strategy.slippageBps, risk: config.risk, allowQuoteBalanceIssues: config.strategy.allowQuoteBalanceIssues, heldPositions }); await persistAutomationResult(env, result, "scanned"); } catch (error) { throw new Error(`strategy/evaluateAutomation: ${error instanceof Error ? error.message : "unknown error"}`); } if (!result.trade) return { executed: false, reason: result.blockedReason ?? "No trade selected." }; const validation = validateTrade(result.trade, config.risk, config.paperCashToken); if (validation) return { executed: false, reason: validation, trade: serializeTrade(result.trade) }; let riskResponse: Response | null; try { riskResponse = await authorizePaperTrade(env, config, result.trade); } catch (error) { throw new Error(`paper/authorizeRisk: ${error instanceof Error ? error.message : "unknown error"}`); } if (riskResponse) { const body = await riskResponse.json() as { reason?: string; error?: string }; return { executed: false, reason: body.reason ?? body.error ?? "Risk gate blocked trade.", trade: serializeTrade(result.trade) }; } let response: Response; try { response = await stateStub(env).fetch(new Request(`https://jarvis.internal/paper/trade?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST", body: JSON.stringify(result.trade, (_, value) => typeof value === "bigint" ? value.toString() : value), headers: { "content-type": "application/json" } })); } catch (error) { throw new Error(`paper/execute: ${error instanceof Error ? error.message : "unknown error"}`); } if (!response.ok) { const body = await response.json().catch(() => null) as { error?: string } | null; return { executed: false, reason: body?.error ?? "Paper execution rejected.", trade: serializeTrade(result.trade) }; } return { executed: true, trade: serializeTrade(result.trade) }; }
 
 export { TradingBotState, RiskState };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") return json({ ok: true });
     const url = new URL(request.url);
-    if (url.pathname === "/strategy/run" && request.method === "POST") {
-      try { const config = getConfig(env); return json({ ok: true, ...(await runPaperCycle(env, config)) }); }
-      catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Strategy run failed." }, { status: 503 }); }
-    }
+    if (url.pathname === "/strategy/run" && request.method === "POST") { try { const config = getConfig(env); return json({ ok: true, ...(await runPaperCycle(env, config)) }); } catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Strategy run failed." }, { status: 503 }); } }
     try {
       const config = getConfig(env);
-      if (url.pathname === "/paper/reset" && request.method === "POST") {
-        if (config.mode !== "paper") return json({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 });
-        return stateStub(env).fetch(new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" }));
-      }
-      if (url.pathname === "/health" && request.method === "GET") return json({ ok: true, mode: config.mode, liveTradingEnabled: config.liveTradingEnabled, geminiFallbacksConfigured: [Boolean(config.gemini.primaryKey), Boolean(config.gemini.fallback1Key), Boolean(config.gemini.fallback2Key)].filter(Boolean).length, configuration: { geminiPrimaryConfigured: Boolean(config.gemini.primaryKey), geminiFallback1Configured: Boolean(config.gemini.fallback1Key), geminiFallback2Configured: Boolean(config.gemini.fallback2Key), zeroExConfigured: Boolean(config.zeroExApiKey), paperTakerConfigured: Boolean(config.paperTakerAddress), theGraphConfigured: Boolean(config.strategy.theGraphApiKey), theGraphSecretSource: config.strategy.theGraphApiKeySource } });
+      if (url.pathname === "/automation/status" && request.method === "GET") return stateStub(env).fetch("https://jarvis.internal/strategy/latest");
+      if (url.pathname === "/paper/reset" && request.method === "POST") { if (config.mode !== "paper") return json({ ok: false, error: "Paper reset is only available in paper mode." }, { status: 409 }); return stateStub(env).fetch(new Request(`https://jarvis.internal/paper/reset?cashToken=${config.paperCashToken}&startingCashWei=${config.paperStartingCashWei}`, { method: "POST" })); }
+      if (url.pathname === "/health" && request.method === "GET") return json({ ok: true, mode: config.mode, liveTradingEnabled: config.liveTradingEnabled, automationCron: "*/3 * * * *", geminiFallbacksConfigured: [Boolean(config.gemini.primaryKey), Boolean(config.gemini.fallback1Key), Boolean(config.gemini.fallback2Key)].filter(Boolean).length, configuration: { geminiPrimaryConfigured: Boolean(config.gemini.primaryKey), geminiFallback1Configured: Boolean(config.gemini.fallback1Key), geminiFallback2Configured: Boolean(config.gemini.fallback2Key), zeroExConfigured: Boolean(config.zeroExApiKey), paperTakerConfigured: Boolean(config.paperTakerAddress), theGraphConfigured: Boolean(config.strategy.theGraphApiKey), theGraphSecretSource: config.strategy.theGraphApiKeySource } });
       if (url.pathname === "/diagnostics/graph" && request.method === "GET") { const provider = new TheGraphMarketDataProvider(config.strategy.theGraphApiKey ?? "", config.strategy.theGraphUniswapV3SubgraphId); return json(await provider.diagnose()); }
       if (url.pathname === "/risk/state" && request.method === "GET") return riskStub(env).fetch("https://jarvis-risk/state");
       if (url.pathname === "/risk/kill-switch" && request.method === "POST") return riskStub(env).fetch(new Request("https://jarvis-risk/kill-switch", request));
-      if (url.pathname === "/trade" && request.method === "POST") {
-        if (config.mode === "live") return json({ ok: false, error: "Live execution is fail-closed until wallet-level persistent exposure accounting is enabled." }, { status: 503 });
-        try { const trade = parseTrade(await request.json() as TradePayload); const basic = validateTrade(trade, config.risk, config.paperCashToken); if (basic) return json({ ok: false, error: basic }, { status: 400 }); const riskResponse = await authorizePaperTrade(env, config, trade); if (riskResponse) return riskResponse; return legacy.fetch(new Request(request, { body: JSON.stringify({ ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() }), headers: request.headers } as Request), env); }
-        catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Invalid trade payload." }, { status: 400 }); }
-      }
+      if (url.pathname === "/trade" && request.method === "POST") { if (config.mode === "live") return json({ ok: false, error: "Live execution is fail-closed until wallet-level persistent exposure accounting is enabled." }, { status: 503 }); try { const trade = parseTrade(await request.json() as TradePayload); const basic = validateTrade(trade, config.risk, config.paperCashToken); if (basic) return json({ ok: false, error: basic }, { status: 400 }); const riskResponse = await authorizePaperTrade(env, config, trade); if (riskResponse) return riskResponse; return legacy.fetch(new Request(request, { body: JSON.stringify({ ...trade, amountInWei: trade.amountInWei.toString(), amountOutWei: trade.amountOutWei.toString() }), headers: request.headers } as Request), env); } catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Invalid trade payload." }, { status: 400 }); } }
       return legacy.fetch(request, env);
     } catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "Worker request failed." }, { status: 503 }); }
   },
