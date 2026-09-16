@@ -32,5 +32,5 @@
     { "tag": "v2", "new_sqlite_classes": ["RiskState"] },
     { "tag": "v3", "new_sqlite_classes": ["LiveTradingState"] }
   ],
-  "triggers": { "crons": ["*/5 * * * *"] }
+  "triggers": { "crons": ["*/3 * * * *"] }
 }
